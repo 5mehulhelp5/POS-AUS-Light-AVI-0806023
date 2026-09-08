@@ -896,7 +896,15 @@ export default function PaymentModal({
       // Delivery fee is part of what the customer actually pays, so
       // "paid now" for a non-deposit order must include it. Balance
       // owing is computed against the same delivery-inclusive total.
-      const amountPaidNow = isDepositOrder ? depositDue : totalWithDelivery;
+      // Bank transfer money hasn't actually landed at checkout time
+      // (Sally, 7 Sep): the invoice must keep the balance owing and note
+      // the method, while cash/EFTPOS paid in full prints BALANCE $0.00.
+      const amountPaidNow =
+        method === 'bank_transfer'
+          ? 0
+          : isDepositOrder
+            ? depositDue
+            : totalWithDelivery;
       const balanceOwing = Math.max(
         0,
         Math.round((totalWithDelivery - amountPaidNow) * 100) / 100,

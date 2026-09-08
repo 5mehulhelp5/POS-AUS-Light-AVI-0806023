@@ -43,6 +43,9 @@ interface CartPanelProps {
   onSetItemUnitPrice: (productId: number, unitPrice: number) => void;
   onSetCartDiscount: (discount: CartDiscount | null) => void;
   onSetCustomer: (customer: { id: number; name: string; isTrade?: boolean } | null) => void;
+  // Cart-level Customer/Trade pricing toggle (mirrors customerIsTrade).
+  isTrade: boolean;
+  onSetTradeMode: (isTrade: boolean) => void;
   onClearCart: () => void;
   onCheckout: () => void;
 }
@@ -66,6 +69,8 @@ export default function CartPanel({
   onSetItemUnitPrice,
   onSetCartDiscount,
   onSetCustomer,
+  isTrade,
+  onSetTradeMode,
   onClearCart,
   onCheckout,
 }: CartPanelProps) {
@@ -234,6 +239,33 @@ export default function CartPanel({
             Clear
           </button>
         )}
+      </div>
+
+      {/* Customer / Trade pricing toggle (Sally, 7 Sep): staff click one
+          and the cart prices reflect it — trade applies the auto trade
+          discounts without needing a linked trade customer. Selecting a
+          customer afterwards uses that customer's own trade flag. */}
+      <div className="px-4 pt-3 flex rounded-lg overflow-hidden gap-0">
+        <button
+          className={`flex-1 py-2 text-sm font-semibold rounded-l-lg border transition-colors ${
+            !isTrade
+              ? 'bg-primary-600 text-white border-primary-600'
+              : 'bg-pos-accent text-gray-300 border-gray-700 hover:border-gray-500'
+          }`}
+          onClick={() => onSetTradeMode(false)}
+        >
+          Customer
+        </button>
+        <button
+          className={`flex-1 py-2 text-sm font-semibold rounded-r-lg border transition-colors ${
+            isTrade
+              ? 'bg-orange-600 text-white border-orange-600'
+              : 'bg-pos-accent text-gray-300 border-gray-700 hover:border-gray-500'
+          }`}
+          onClick={() => onSetTradeMode(true)}
+        >
+          Trade
+        </button>
       </div>
 
       {/* Customer */}
@@ -769,6 +801,25 @@ export default function CartPanel({
             <p className="text-sm text-gray-400 mb-4">
               Max discount: {maxDiscountPercent >= 100 ? 'No Limit (Admin)' : `${maxDiscountPercent}%`} | Stacking: {canStackDiscounts ? 'Allowed' : 'Not allowed'}
             </p>
+
+            {/* Cart summary — Sally, 7 Sep: show what's being discounted
+                right in this popup so the cashier isn't working blind. */}
+            <div className="mb-4 max-h-48 overflow-y-auto scrollbar-thin bg-pos-bg border border-gray-700 rounded-lg divide-y divide-gray-800">
+              {items.map((item) => (
+                <div key={item.productId} className="flex items-center justify-between px-3 py-1.5 text-sm gap-2">
+                  <span className="truncate text-gray-300" title={item.name}>
+                    {item.quantity} × {item.name}
+                  </span>
+                  <span className="whitespace-nowrap font-medium">
+                    ${(item.unitPrice * item.quantity).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between px-3 py-1.5 text-sm font-bold">
+                <span>Subtotal</span>
+                <span>${subtotal.toFixed(2)}</span>
+              </div>
+            </div>
 
             {/* Discount Type */}
             <div className="flex gap-2 mb-4">

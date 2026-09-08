@@ -41,7 +41,7 @@ const FALLBACK_STRIP_PRODUCTS: StripProduct[] = [
     cutMm: 500,
     maxRunM: 1000,
     includedTailM: 1,
-    tailPerM: 5,
+    tailPerM: 2.5,
   },
   {
     id: 'HV9760-IP20-320-3K',
@@ -51,7 +51,7 @@ const FALLBACK_STRIP_PRODUCTS: StripProduct[] = [
     cutMm: 500,
     maxRunM: 1000,
     includedTailM: 1,
-    tailPerM: 5,
+    tailPerM: 2.5,
   },
   {
     id: 'HV9760-IP67-320-3K',
@@ -61,7 +61,7 @@ const FALLBACK_STRIP_PRODUCTS: StripProduct[] = [
     cutMm: 500,
     maxRunM: 1000,
     includedTailM: 1,
-    tailPerM: 6,
+    tailPerM: 2.5,
   },
   {
     id: 'HV9723-IP20-240-3K-1',
@@ -71,7 +71,7 @@ const FALLBACK_STRIP_PRODUCTS: StripProduct[] = [
     cutMm: 500,
     maxRunM: 1000,
     includedTailM: 1,
-    tailPerM: 5,
+    tailPerM: 2.5,
   },
 ];
 
@@ -92,6 +92,7 @@ interface OrderLine {
   lengthMm: number;
   suppliedLengthM: number;
   tailM: number;
+  qty: number;
   linePrice: number;
   perM: number;
   isTrade: boolean;
@@ -125,6 +126,8 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
   // internally for the cut-point rounding.
   const [lengthMStr, setLengthMStr] = useState('');
   const [tailMStr, setTailMStr] = useState('1');
+  // How many identical cut strips (Sally, 7 Sep: "add 4x 1m led strip").
+  const [qtyStr, setQtyStr] = useState('1');
   const [isTrade, setIsTrade] = useState(false);
   const [order, setOrder] = useState<OrderLine[]>([]);
 
@@ -177,13 +180,16 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
       : 0;
     const suppliedM = suppliedMm / 1000;
     const extraTailM = Math.max(0, tailM - product.includedTailM);
-    const stripPrice = suppliedM * perM;
-    const tailPrice = extraTailM * product.tailPerM;
+    const qty = Math.max(1, Math.round(Number(qtyStr) || 1));
+    // Per-strip price × qty — each strip gets its own included tail.
+    const stripPrice = suppliedM * perM * qty;
+    const tailPrice = extraTailM * product.tailPerM * qty;
     const linePrice = stripPrice + tailPrice;
     const exceedsMaxRun = suppliedM > product.maxRunM;
     return {
       lengthMm,
       tailM,
+      qty,
       suppliedMm,
       suppliedM,
       extraTailM,
@@ -192,7 +198,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
       linePrice,
       exceedsMaxRun,
     };
-  }, [lengthMStr, tailMStr, product, perM]);
+  }, [lengthMStr, tailMStr, qtyStr, product, perM]);
 
   // Exceeding the max continuous run is a advisory only — it means the
   // job needs joiners/separate runs, not that we refuse the sale. Trade
@@ -211,12 +217,14 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
         lengthMm: calc.lengthMm,
         suppliedLengthM: calc.suppliedM,
         tailM: calc.tailM,
+        qty: calc.qty,
         linePrice: calc.linePrice,
         perM,
         isTrade,
       },
     ]);
     setLengthMStr('');
+    setQtyStr('1');
   };
 
   const handleRemove = (id: number) => {
@@ -229,27 +237,16 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
       sku: `LED-STRIP-${l.product.id.toUpperCase()}-${Math.round(
         l.suppliedLengthM * 1000,
       )}`,
-      name: `${l.product.name} — ${formatLength(l.suppliedLengthM * 1000)}${
-        l.tailM > l.product.includedTailM ? ` + ${l.tailM}m tail` : ''
-      }${l.isTrade ? ' (trade)' : ''}`,
+      name: `${l.product.name} — ${l.qty > 1 ? `${l.qty} × ` : ''}${formatLength(
+        l.suppliedLengthM * 1000,
+      )}${l.tailM > l.product.includedTailM ? ` + ${l.tailM}m tail` : ''}${
+        l.isTrade ? ' (trade)' : ''
+      }`,
       price: l.linePrice,
     }));
     onSendToCart(cartLines);
     onClose();
   };
-
-  // Reel bar visualisation — show N slots for cut points, coloured
-  // amber up to the current supplied length. Purely decorative. Capped
-  // at 40 slots: with the max run at 1000m an uncapped bar would try to
-  // render thousands of segments.
-  const reelSlots = Math.min(
-    40,
-    Math.max(10, Math.ceil((product.maxRunM * 1000) / product.cutMm)),
-  );
-  const filledSlots = Math.min(
-    reelSlots,
-    Math.ceil(calc.suppliedMm / product.cutMm),
-  );
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -368,33 +365,8 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
               </span>
             </div>
 
-            {/* Reel visualisation */}
-            <div className="mt-4 bg-pos-bg border border-gray-700 rounded-md p-4">
-              <div className="flex overflow-hidden rounded">
-                {Array.from({ length: reelSlots }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`flex-1 h-8 border-r border-pos-bg last:border-r-0 ${
-                      i < filledSlots ? 'bg-amber-400' : 'bg-pos-accent/40'
-                    }`}
-                    style={
-                      i < filledSlots
-                        ? {
-                            opacity: 0.55 + 0.45 * (i / Math.max(1, filledSlots - 1)),
-                          }
-                        : {}
-                    }
-                  />
-                ))}
-              </div>
-              <div className="flex justify-between mt-1 text-[11px] text-gray-500">
-                <span>0</span>
-                <span>{product.maxRunM}m reel</span>
-              </div>
-            </div>
-
-            {/* Length + Tail inputs */}
-            <div className="mt-4 grid grid-cols-2 gap-4">
+            {/* Length + Qty + Tail inputs (reel bar removed — Sally, 7 Sep) */}
+            <div className="mt-4 grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-400 mb-1">
                   Length (m)
@@ -418,6 +390,23 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                     </span>
                   </p>
                 )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">
+                  Qty
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  step={1}
+                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  value={qtyStr}
+                  onChange={(e) => setQtyStr(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  identical strips, e.g. 4 × 1m
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-400 mb-1">
@@ -498,6 +487,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                         {l.product.name}
                       </div>
                       <div className="text-xs text-gray-400">
+                        {l.qty > 1 ? `${l.qty} × ` : ''}
                         {formatLength(l.suppliedLengthM * 1000)} · tail {l.tailM}m · ${l.perM.toFixed(2)}/m
                         {l.isTrade ? ' · trade' : ''}
                       </div>

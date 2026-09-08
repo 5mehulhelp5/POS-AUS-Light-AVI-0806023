@@ -24,6 +24,8 @@ import {
   setItemUnitPrice,
   setCartDiscount,
   setCustomer,
+  setTradeMode,
+  restoreCart,
   setTradeAutoDiscounts,
   setExchangeContext,
   loadQuote,
@@ -110,6 +112,28 @@ export default function POSPage() {
   const [reviewSelections, setReviewSelections] = useState<OrderReviewSelections | null>(null);
   const [detailProduct, setDetailProduct] = useState<any>(null);
   const [showCustomItem, setShowCustomItem] = useState(false);
+  // Draft orders (Sally, 7 Sep): park a browsing customer's cart, serve
+  // someone else, resume later. Stored per-till in localStorage.
+  const [showDrafts, setShowDrafts] = useState(false);
+  const [draftOrders, setDraftOrders] = useState<
+    Array<{ id: number; label: string; savedAt: string; cart: any }>
+  >(() => {
+    try {
+      return JSON.parse(localStorage.getItem('pos_draft_orders') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const persistDrafts = (
+    drafts: Array<{ id: number; label: string; savedAt: string; cart: any }>,
+  ) => {
+    setDraftOrders(drafts);
+    try {
+      localStorage.setItem('pos_draft_orders', JSON.stringify(drafts));
+    } catch {
+      toast.error('Could not save draft (storage unavailable)');
+    }
+  };
   // LED Strip Lights calculator modal — opened from a virtual category
   // tile on the home screen; on Send, each strip line is pushed into
   // the main cart as a custom item.
@@ -224,14 +248,18 @@ export default function POSPage() {
   useEffect(() => {
     // If searching via dropdowns, category is required
     if (searchCatId) {
-      // If subcats exist but none selected, don't fetch yet
-      if (searchSubcats.length > 0 && !searchSubcatId) return;
+      // If subcats exist but none selected, don't fetch yet — UNLESS the
+      // cashier typed a search term (Sally, 7 Sep: searching must work
+      // at the parent-category level too, e.g. all of "Globes").
+      if (searchSubcats.length > 0 && !searchSubcatId && !searchQuery.trim())
+        return;
       // Same gate at the 3rd level: if the selected subcategory has
       // children, wait for the user to pick one before showing products.
       if (
         searchSubcatId &&
         searchSubsubcats.length > 0 &&
-        !searchSubsubcatId
+        !searchSubsubcatId &&
+        !searchQuery.trim()
       )
         return;
 
@@ -487,13 +515,34 @@ export default function POSPage() {
     }
   };
 
-  const handleAddCustomItem = () => {
+  const handleAddCustomItem = async () => {
     const price = parseFloat(customItemPrice);
     if (!customItemName.trim() || isNaN(price) || price <= 0) return;
+    // Duplicate guard (Sally, 7 Sep): if the typed SKU already exists in
+    // the catalogue, block the custom item — it would double the product
+    // up and dodge the real price/cost data.
+    const sku = customItemSku.trim();
+    if (sku && sku.toUpperCase() !== 'CUSTOM') {
+      try {
+        const r = await productsApi.getProducts({ search: sku, limit: 5 });
+        const hit = (r.data?.data?.products || []).find(
+          (p: any) =>
+            String(p.sku || '').trim().toLowerCase() === sku.toLowerCase(),
+        );
+        if (hit) {
+          toast.error(
+            `"${sku}" already exists in the POS (${hit.name}) — add the catalogue product instead`,
+          );
+          return;
+        }
+      } catch {
+        // Lookup failure shouldn't block the sale — fall through.
+      }
+    }
     dispatch(
       addItem({
         productId: -Date.now(),
-        sku: customItemSku.trim() || 'CUSTOM',
+        sku: sku || 'CUSTOM',
         name: customItemName.trim(),
         price,
       })
@@ -665,6 +714,41 @@ export default function POSPage() {
             Custom Item
           </button>
 
+          {/* Draft orders (Sally, 7 Sep): park the current cart while
+              serving another customer, resume from the Drafts list. */}
+          <button
+            className="btn-sm bg-teal-600 text-white whitespace-nowrap px-4 disabled:opacity-40"
+            disabled={cart.items.length === 0}
+            onClick={() => {
+              const label = window.prompt(
+                'Name this draft (customer name helps):',
+                cart.customerName || 'Walk-in',
+              );
+              if (label === null) return;
+              persistDrafts([
+                {
+                  id: Date.now(),
+                  label: label.trim() || 'Draft',
+                  savedAt: new Date().toISOString(),
+                  cart,
+                },
+                ...draftOrders,
+              ]);
+              dispatch(clearCart());
+              toast.success('Draft saved — cart cleared for the next customer');
+            }}
+          >
+            Save Draft
+          </button>
+          {draftOrders.length > 0 && (
+            <button
+              className="btn-sm bg-pos-accent text-teal-300 whitespace-nowrap px-4 hover:bg-pos-bg"
+              onClick={() => setShowDrafts(true)}
+            >
+              Drafts ({draftOrders.length})
+            </button>
+          )}
+
           <button
             className="btn-sm bg-pos-accent text-gray-200 whitespace-nowrap flex items-center gap-1 px-4 hover:bg-pos-bg"
             onClick={showLastInvoice}
@@ -788,19 +872,19 @@ export default function POSPage() {
             <p className="text-gray-400 text-lg">Loading subcategories...</p>
           </div>
         )}
-        {searchCatId && !loadingSearchSubcats && searchSubcats.length > 0 && !searchSubcatId && (
+        {searchCatId && !loadingSearchSubcats && searchSubcats.length > 0 && !searchSubcatId && !searchQuery.trim() && (
           <div className="flex-1 flex items-center justify-center">
-            <p className="text-gray-400 text-lg">Please select a subcategory to view products</p>
+            <p className="text-gray-400 text-lg">Select a subcategory — or type above to search the whole category</p>
           </div>
         )}
-        {searchSubcatId && !loadingSearchSubsubcats && searchSubsubcats.length > 0 && !searchSubsubcatId && (
+        {searchSubcatId && !loadingSearchSubsubcats && searchSubsubcats.length > 0 && !searchSubsubcatId && !searchQuery.trim() && (
           <div className="flex-1 flex items-center justify-center">
-            <p className="text-gray-400 text-lg">Please select a type to view products</p>
+            <p className="text-gray-400 text-lg">Select a type — or type above to search the whole subcategory</p>
           </div>
         )}
 
         {/* PRODUCTS VIEW */}
-        {(viewMode === 'products' || searchCatId) && !loadingSearchSubcats && !loadingSearchSubsubcats && !(searchCatId && searchSubcats.length > 0 && !searchSubcatId) && !(searchSubcatId && searchSubsubcats.length > 0 && !searchSubsubcatId) && (
+        {(viewMode === 'products' || searchCatId) && !loadingSearchSubcats && !loadingSearchSubsubcats && !(searchCatId && searchSubcats.length > 0 && !searchSubcatId && !searchQuery.trim()) && !(searchSubcatId && searchSubsubcats.length > 0 && !searchSubsubcatId && !searchQuery.trim()) && (
           <>
             <ProductGrid
               products={products}
@@ -865,11 +949,37 @@ export default function POSPage() {
         onSetItemDiscount={(productId, discountPercent) =>
           dispatch(setItemDiscount({ productId, discountPercent }))
         }
-        onSetItemUnitPrice={(productId, unitPrice) =>
-          dispatch(setItemUnitPrice({ productId, unitPrice }))
-        }
+        onSetItemUnitPrice={(productId, unitPrice) => {
+          // Sally, 7 Sep: editing a price straight in the cart must hit
+          // the minimum-margin floor immediately, not only at payment.
+          // costMap only has values for manager/admin (cost is hidden
+          // from sales staff by the API) — staff are still hard-blocked
+          // server-side at order creation.
+          const cost = costMap[productId];
+          const isMgr =
+            user?.role.name === 'admin' || user?.role.name === 'manager';
+          if (cost != null && cost > 0 && unitPrice < cost * 1.3) {
+            if (!isMgr) {
+              toast.error(
+                'That price is below the minimum allowed margin — ask a manager',
+              );
+              return;
+            }
+            if (
+              !window.confirm(
+                `$${unitPrice.toFixed(2)} is below the minimum margin ` +
+                  `(cost + 30% = $${(cost * 1.3).toFixed(2)}). Set it anyway?`,
+              )
+            ) {
+              return;
+            }
+          }
+          dispatch(setItemUnitPrice({ productId, unitPrice }));
+        }}
         onSetCartDiscount={(discount) => dispatch(setCartDiscount(discount))}
         onSetCustomer={(customer) => dispatch(setCustomer(customer))}
+        isTrade={cart.customerIsTrade}
+        onSetTradeMode={(v) => dispatch(setTradeMode(v))}
         onClearCart={() => dispatch(clearCart())}
         onCheckout={handleCheckout}
       />
@@ -941,6 +1051,79 @@ export default function POSPage() {
       {/* Last-invoice re-print */}
       {invoiceData && (
         <InvoiceModal invoice={invoiceData} onClose={() => setInvoiceData(null)} />
+      )}
+
+      {/* Draft Orders Modal */}
+      {showDrafts && (
+        <div className="modal-backdrop" onClick={() => setShowDrafts(false)}>
+          <div
+            className="modal-content-small max-w-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold">Draft Orders</h3>
+              <button
+                className="text-gray-400 hover:text-white"
+                onClick={() => setShowDrafts(false)}
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+            {draftOrders.length === 0 ? (
+              <p className="text-gray-400 text-sm py-6 text-center">No drafts saved.</p>
+            ) : (
+              <ul className="divide-y divide-gray-700 max-h-96 overflow-y-auto scrollbar-thin">
+                {draftOrders.map((d) => (
+                  <li key={d.id} className="py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold truncate">{d.label}</div>
+                      <div className="text-xs text-gray-400">
+                        {d.cart?.items?.length ?? 0} item
+                        {(d.cart?.items?.length ?? 0) === 1 ? '' : 's'} · $
+                        {Number(d.cart?.total ?? 0).toFixed(2)} ·{' '}
+                        {new Date(d.savedAt).toLocaleString('en-AU', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </div>
+                    </div>
+                    <button
+                      className="btn-sm bg-teal-600 text-white px-3"
+                      onClick={() => {
+                        if (
+                          cart.items.length > 0 &&
+                          !window.confirm(
+                            'The current cart has items — resuming this draft replaces it. Continue?',
+                          )
+                        ) {
+                          return;
+                        }
+                        dispatch(restoreCart(d.cart));
+                        persistDrafts(draftOrders.filter((x) => x.id !== d.id));
+                        setShowDrafts(false);
+                        toast.success(`Draft "${d.label}" resumed`);
+                      }}
+                    >
+                      Resume
+                    </button>
+                    <button
+                      className="btn-sm bg-red-600/70 text-white px-3"
+                      onClick={() => {
+                        if (window.confirm(`Delete draft "${d.label}"?`)) {
+                          persistDrafts(draftOrders.filter((x) => x.id !== d.id));
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Custom Item Modal */}

@@ -166,6 +166,17 @@ export default function ProductGrid({
                     Trade ${tradePrice.toFixed(2)}
                   </span>
                 )}
+                {/* Cost on SALE/Clearance tiles for manager/admin only —
+                    the API strips `cost` for sales staff, so its mere
+                    presence is the role check (Sally, 7 Sep). */}
+                {onSale && (product as any).cost != null && (
+                  <span
+                    className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-gray-600/30 text-gray-300 border border-gray-500/40"
+                    title="Supplier cost (inc GST)"
+                  >
+                    Cost ${Number((product as any).cost).toFixed(2)}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-gray-500">
                 Stock: {product.stockQty}

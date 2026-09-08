@@ -57,11 +57,6 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     .filter((p: any) => p.method !== 'store_credit')
     .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
   const grandTotalNum = parseFloat(o.grandTotal);
-  const owingAfterAll = Math.max(
-    0,
-    Math.round((grandTotalNum - paidNonCredit - creditApplied) * 100) / 100,
-  );
-  const isPartiallyPaid = owingAfterAll > 0.005;
   const takeNowSubtotal = (o.items || [])
     .filter((it: any) => !it.isBackorder && !it.isLaybyHeld)
     .reduce((s: number, it: any) => s + Number(it.rowTotal || 0), 0);
@@ -103,16 +98,14 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     // Present when the order detail endpoint attached exchange links
     // (this sale replaced goods returned on an earlier order).
     exchangeFromOrderNumber: o.exchangeFromOrder?.orderNumber || undefined,
-    // Deposit/balance split for partially-paid orders (layby, backorder
-    // deposits). InvoiceModal renders DEPOSIT + BALANCE-owing rows when
-    // balanceDue is present; fully paid orders keep the plain layout.
-    // balanceDue is pre-credit — InvoiceModal subtracts creditApplied.
-    amountPaid: isPartiallyPaid
-      ? Math.round(paidNonCredit * 100) / 100
-      : undefined,
-    balanceDue: isPartiallyPaid
-      ? Math.max(0, Math.round((grandTotalNum - paidNonCredit) * 100) / 100)
-      : undefined,
+    // Always present (Sally, 7 Sep: a paid-in-full reprint must show
+    // PAID + BALANCE $0.00, not re-bill the total). balanceDue is
+    // pre-credit — InvoiceModal subtracts creditApplied.
+    amountPaid: Math.round(paidNonCredit * 100) / 100,
+    balanceDue: Math.max(
+      0,
+      Math.round((grandTotalNum - paidNonCredit) * 100) / 100,
+    ),
     isLayby: (o.items || []).some((it: any) => it.isLaybyHeld) || o.orderType === 'layby',
     isBackorder: (o.items || []).some((it: any) => it.isBackorder),
     takeNowSubtotal: hasDeferred

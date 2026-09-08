@@ -717,25 +717,33 @@ export default function OrdersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    {order.customer ? (
-                      <span className="flex items-center gap-2">
-                        <span>{order.customer.firstName} {order.customer.lastName}</span>
-                        {order.customer.isTrade && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-orange-600/30 text-orange-300 border border-orange-500/40">
-                            TRADE
-                          </span>
-                        )}
-                      </span>
-                    ) : (order as any).customerNameSnapshot ? (
-                      <span className="flex items-center gap-2">
-                        <span>{(order as any).customerNameSnapshot}</span>
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-gray-600/40 text-gray-300 border border-gray-500/40">
-                          WALK-IN
+                    {/* Sally, 7 Sep: clicking the customer's name opens
+                        the same refund/edit screen as the yellow arrow. */}
+                    <button
+                      onClick={() => canRefund && openRefundModal(order)}
+                      className={canRefund ? 'text-left hover:underline' : 'text-left cursor-default'}
+                      title={canRefund ? 'Open / edit this order' : undefined}
+                    >
+                      {order.customer ? (
+                        <span className="flex items-center gap-2">
+                          <span>{order.customer.firstName} {order.customer.lastName}</span>
+                          {order.customer.isTrade && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-orange-600/30 text-orange-300 border border-orange-500/40">
+                              TRADE
+                            </span>
+                          )}
                         </span>
-                      </span>
-                    ) : (
-                      'Walk-in'
-                    )}
+                      ) : (order as any).customerNameSnapshot ? (
+                        <span className="flex items-center gap-2">
+                          <span>{(order as any).customerNameSnapshot}</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-gray-600/40 text-gray-300 border border-gray-500/40">
+                            WALK-IN
+                          </span>
+                        </span>
+                      ) : (
+                        'Walk-in'
+                      )}
+                    </button>
                   </td>
                   <td className="px-4 py-3">{order.itemCount}</td>
                   <td className="px-4 py-3 font-medium">${order.grandTotal.toFixed(2)}</td>
@@ -786,7 +794,9 @@ export default function OrdersPage() {
                           <ArrowUturnLeftIcon className="h-5 w-5" />
                         </button>
                       )}
-                      {canRefund &&
+                      {/* Magento push retry — manager/admin only (Sally,
+                          7 Sep: staff level doesn't need the cloud icon). */}
+                      {(user?.role.name === 'admin' || user?.role.name === 'manager') &&
                         order.source === 'pos' &&
                         (order.syncStatus === 'failed' || order.syncStatus === 'pending') && (
                           <button

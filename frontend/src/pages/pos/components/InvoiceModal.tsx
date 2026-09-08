@@ -159,6 +159,14 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
   const addr = splitAddress(invoice.customerAddress);
   const showDeposit =
     typeof invoice.balanceDue === 'number' && invoice.balanceDue > 0.01;
+  const methodLabel = (m?: string) =>
+    m === 'cash'
+      ? 'CASH'
+      : m === 'bank_transfer'
+        ? 'BANK TRANSFER'
+        : m === 'store_credit'
+          ? 'STORE CREDIT'
+          : 'EFTPOS';
 
   // Aggregate qty splits across the order so we can render per-line
   // TAKEN / B-ORDER / LAY-BY columns matching the printed template.
@@ -384,10 +392,23 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
                     {invoice.takeNowSubtotal != null ? money(invoice.takeNowSubtotal) : ''}
                   </td>
                 </tr>
-                {showDeposit && (
+                {/* Payment reflection (Sally, 7 Sep): money received
+                    prints as DEPOSIT (partial) or PAID (in full) with
+                    the method; an unpaid bank transfer gets its own
+                    line so the remaining balance is explained. */}
+                {typeof invoice.amountPaid === 'number' && invoice.amountPaid > 0 && (
                   <tr>
-                    <td style={totLabel}>DEPOSIT:</td>
-                    <td style={totVal()}>{money(invoice.amountPaid || 0)}</td>
+                    <td style={totLabel}>
+                      {showDeposit ? 'DEPOSIT' : 'PAID'} ({methodLabel(invoice.paymentMethod)}):
+                    </td>
+                    <td style={totVal()}>{money(invoice.amountPaid)}</td>
+                  </tr>
+                )}
+                {invoice.paymentMethod === 'bank_transfer' && showDeposit && (
+                  <tr>
+                    <td style={totLabel} colSpan={2}>
+                      PAYING BY BANK TRANSFER
+                    </td>
                   </tr>
                 )}
                 {invoice.deliveryFee != null && invoice.deliveryFee > 0 && (
@@ -433,12 +454,17 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
                   >
                     {/* Store credit is money already paid — subtract it so
                         a credit-covered exchange prints BALANCE $0.00
-                        instead of re-billing the replacement item. */}
+                        instead of re-billing the replacement item.
+                        When balanceDue is provided it is authoritative
+                        (0 for paid-in-full — Sally, 7 Sep); only legacy
+                        payloads without it fall back to the total. */}
                     {money(
                       Math.max(
                         0,
                         Math.round(
-                          ((showDeposit ? invoice.balanceDue! : invoice.grandTotal) -
+                          ((typeof invoice.balanceDue === 'number'
+                            ? invoice.balanceDue
+                            : invoice.grandTotal) -
                             (invoice.creditApplied || 0)) *
                             100,
                         ) / 100,

@@ -301,6 +301,31 @@ const cartSlice = createSlice({
       }
     },
 
+    // Replace the whole cart with a saved draft (Sally, 7 Sep: "Save
+    // Draft Order" for customers who browse for an hour while staff
+    // serve others in between). Totals are recomputed rather than
+    // trusted from storage.
+    restoreCart: (_state, action: PayloadAction<CartState>) => {
+      const restored = { ...initialState, ...action.payload };
+      recalculateTotals(restored as CartState);
+      return restored as CartState;
+    },
+
+    // Cart-level Trade/Customer toggle (Sally, 7 Sep): trade pricing
+    // without needing a linked trade customer — e.g. a walk-in tradie.
+    // Selecting a customer afterwards overrides this with the
+    // customer's own isTrade flag (setCustomer wins).
+    setTradeMode: (state, action: PayloadAction<boolean>) => {
+      state.customerIsTrade = action.payload;
+      if (!action.payload) {
+        state.items.forEach((it) => {
+          it.autoDiscountPercent = 0;
+          it.autoDiscountLabel = null;
+        });
+      }
+      recalculateTotals(state);
+    },
+
     // Bulk-set auto discounts for the current cart from the backend
     // preview response. Items not in the map keep their existing auto.
     setTradeAutoDiscounts: (
@@ -469,6 +494,8 @@ export const {
   setItemUnitPrice,
   setCartDiscount,
   setCustomer,
+  setTradeMode,
+  restoreCart,
   setTradeAutoDiscounts,
   setNotes,
   setExchangeContext,

@@ -216,7 +216,7 @@ export default function ProductDetailModal({
               {product.cost != null && (
                 <span
                   className="text-xs font-bold px-2 py-0.5 rounded bg-gray-600/30 text-gray-300 border border-gray-500/40"
-                  title="Supplier cost (ex GST)"
+                  title="Supplier cost (inc GST)"
                 >
                   Cost ${Number(product.cost).toFixed(2)}
                 </span>
