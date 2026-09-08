@@ -1792,27 +1792,41 @@ export default function OrdersPage() {
                   Add Lights
                 </button>
                 {/* Exchange: return to store credit + go to POS to ring
-                    the replacement (needs a linked customer). */}
+                    the replacement (needs a linked customer). Guards run
+                    ON CLICK with a toast saying why — a silently
+                    disabled button reads as "broken" (Sally, 9 Sep). */}
                 <button
                   className="btn-primary bg-cyan-600 hover:bg-cyan-700"
-                  onClick={() => processRefund(true)}
-                  disabled={
-                    isProcessingRefund ||
-                    refundTotal === 0 ||
-                    !refundOrder.customer
-                  }
-                  title={
-                    !refundOrder.customer
-                      ? 'Link a customer first to exchange (store credit)'
-                      : 'Return to store credit and ring the replacement'
-                  }
+                  onClick={() => {
+                    if (refundTotal === 0) {
+                      toast.error(
+                        'Tick at least one item above first — the exchange needs items to return',
+                      );
+                      return;
+                    }
+                    if (!refundOrder.customer) {
+                      toast.error(
+                        'Link a customer first — an exchange parks the value as store credit on their account',
+                      );
+                      return;
+                    }
+                    processRefund(true);
+                  }}
+                  disabled={isProcessingRefund}
+                  title="Return to store credit and ring the replacement"
                 >
                   {refundAsCash ? 'Refund & Exchange' : 'Refund Credits & Exchange'}
                 </button>
                 <button
                   className="btn-primary bg-orange-600 hover:bg-orange-700"
-                  onClick={() => processRefund(false)}
-                  disabled={isProcessingRefund || refundTotal === 0}
+                  onClick={() => {
+                    if (refundTotal === 0) {
+                      toast.error('Tick at least one item above to refund first');
+                      return;
+                    }
+                    processRefund(false);
+                  }}
+                  disabled={isProcessingRefund}
                 >
                   {/* Sally, 25 Aug: orange button reads just "Refund" */}
                   {isProcessingRefund ? 'Processing...' : 'Refund'}
