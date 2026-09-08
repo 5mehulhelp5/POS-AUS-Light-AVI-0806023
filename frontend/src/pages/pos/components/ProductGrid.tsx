@@ -56,7 +56,12 @@ export default function ProductGrid({
     <div className="flex-1 overflow-y-auto scrollbar-thin">
       <div className="grid grid-cols-5 gap-2 auto-rows-max">
         {products.map((product) => {
-          const onSale = isProductOnSale(product);
+          // Badge: special-price window OR the server's category-based
+          // flag (Sale/Clearance category without a special price —
+          // Coolum). Strike-through pricing only when a real special
+          // price exists; category-sale items show their normal price.
+          const priceSale = isProductOnSale(product);
+          const onSale = priceSale || (product as any).isOnSale === true;
           // Trade price is always computed off the fixed retail
           // (product.price), even when the item is on SALE — the trade
           // discount does not stack on top of the sale discount.
@@ -144,7 +149,7 @@ export default function ProductGrid({
               <p className="text-xs text-gray-400 font-mono">{product.sku}</p>
               <h3 className="font-medium text-sm line-clamp-2">{product.name}</h3>
               <div className="flex items-center gap-2 flex-wrap">
-                {onSale ? (
+                {priceSale ? (
                   <>
                     <span className="text-primary-400 font-bold">
                       ${Number(product.specialPrice).toFixed(2)}

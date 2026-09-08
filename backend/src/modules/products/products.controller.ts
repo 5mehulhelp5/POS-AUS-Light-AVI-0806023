@@ -169,7 +169,9 @@ export class ProductsController {
           // for the cart so the cashier total agrees with the server.
           specialPriceFrom: p.specialPriceFrom,
           specialPriceTo: p.specialPriceTo,
-          isOnSale: p.isOnSale,
+          // Special-price window OR Sale/Clearance category membership
+          // (Coolum-style "Sale" tags without a special price).
+          isOnSale: p.isOnSale || p.isInSaleCategory,
           effectivePrice: p.effectivePrice,
           // Cost — manager/admin only. Used by the cart to warn when a
           // sale drops the unit price below cost+30% (the minimum margin
@@ -398,7 +400,7 @@ export class ProductsController {
           brand: product.brand || null,
           specialPriceFrom: product.specialPriceFrom,
           specialPriceTo: product.specialPriceTo,
-          isOnSale: product.isOnSale,
+          isOnSale: product.isOnSale || product.isInSaleCategory,
           effectivePrice: product.effectivePrice,
           stockQty: product.stockQty,
           isInStock: product.isInStock,

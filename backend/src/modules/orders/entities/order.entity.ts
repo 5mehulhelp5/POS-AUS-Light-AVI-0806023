@@ -173,8 +173,13 @@ export class Order {
   @Column({ name: 'synced_at', type: 'timestamp', nullable: true })
   syncedAt: Date | null;
 
+  // Customer-facing note — printed on the invoice (Sally, 26 Aug).
   @Column({ type: 'text', nullable: true })
   notes: string | null;
+
+  // Staff-only note — never printed, shown in the POS order drawer.
+  @Column({ name: 'internal_notes', type: 'text', nullable: true })
+  internalNotes: string | null;
 
   // Snapshot of the customer name at order time. Populated for walk-in
   // orders (no customer FK) so the orders list can still show a name

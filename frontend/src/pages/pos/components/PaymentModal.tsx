@@ -194,6 +194,8 @@ export default function PaymentModal({
   const [tradeFirstName, setTradeFirstName] = useState('');
   const [tradeLastName, setTradeLastName] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
+  // Staff-only note — saved on the order, never printed (Sally, 26 Aug).
+  const [internalOrderNotes, setInternalOrderNotes] = useState('');
   const [walkIn, setWalkIn] = useState(false);
 
   // Existing-customer-by-phone lookup. When the cashier types a full
@@ -821,6 +823,8 @@ export default function PaymentModal({
           cartDiscount: cart.cartDiscount || undefined,
           payments,
           notes: orderNotes.trim() || cart.notes || undefined,
+          internalNotes:
+            internalOrderNotes.trim() || cart.internalNotes || undefined,
         };
 
         const response = await ordersApi.createOrder(orderData);
@@ -941,6 +945,9 @@ export default function PaymentModal({
         paymentMethod: method,
         cashTendered: method === 'cash' ? cashAmount : undefined,
         change: method === 'cash' ? change : undefined,
+        // Customer note prints in the invoice NOTES box; the internal
+        // note deliberately never reaches the invoice payload.
+        notes: orderNotes.trim() || cart.notes || undefined,
         // Deposit / balance metadata — absent means the whole total was paid
         isLayby: isLayby || hasLaybyHeldLine,
         isBackorder: hasBackorderLine,
@@ -1340,19 +1347,33 @@ export default function PaymentModal({
           )}
         </div>
 
-        {/* Order Notes — placed above customer details so the cashier
-            can jot a quick note before getting into invoice fields. */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-400 mb-2">
-            Order Notes (optional)
-          </label>
-          <textarea
-            className="input"
-            rows={2}
-            placeholder="Internal notes for this order..."
-            value={orderNotes}
-            onChange={(e) => setOrderNotes(e.target.value)}
-          />
+        {/* Two note boxes (Sally, 26 Aug): the customer note prints on
+            the invoice; the internal note stays staff-only. */}
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Customer note (prints on invoice)
+            </label>
+            <textarea
+              className="input"
+              rows={2}
+              placeholder="e.g. delivery instructions, pickup date…"
+              value={orderNotes}
+              onChange={(e) => setOrderNotes(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Internal note (staff only — never printed)
+            </label>
+            <textarea
+              className="input"
+              rows={2}
+              placeholder="e.g. waiting on Havit ETA, chase supplier…"
+              value={internalOrderNotes}
+              onChange={(e) => setInternalOrderNotes(e.target.value)}
+            />
+          </div>
         </div>
 
         {/* Customer/Company Details (for Invoice) */}

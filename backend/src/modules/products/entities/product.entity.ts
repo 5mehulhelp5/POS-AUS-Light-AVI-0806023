@@ -158,6 +158,19 @@ export class Product {
     return this.isOnSale ? Number(this.specialPrice) : Number(this.price);
   }
 
+  // A product ALSO counts as on-sale for display and discount-exclusion
+  // when Magento put it in a Sale/Clearance category without setting a
+  // special price (Sally, 7 Sep: the Coolum range carries the site's
+  // Sale tag this way). Same category rule as the trade-discount
+  // engine's clearance carve-out. Only meaningful when the categories
+  // relation is loaded — false otherwise.
+  get isInSaleCategory(): boolean {
+    return (this.categories || []).some((c) => {
+      const n = (c.name || '').trim().toLowerCase();
+      return /clearance/.test(n) || n === 'sale';
+    });
+  }
+
   static isOnSale(
     price: number | string | null | undefined,
     specialPrice: number | string | null | undefined,

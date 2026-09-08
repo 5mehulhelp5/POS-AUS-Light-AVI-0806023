@@ -188,9 +188,18 @@ export default function ProductDetailModal({
                   </span>
                 </>
               ) : (
-                <span className="text-2xl font-bold text-primary-400">
-                  ${Number(product.price).toFixed(2)}
-                </span>
+                <>
+                  <span className="text-2xl font-bold text-primary-400">
+                    ${Number(product.price).toFixed(2)}
+                  </span>
+                  {/* Category-based SALE (no special price — Coolum):
+                      badge only, price stays regular. */}
+                  {(product as any).isOnSale === true && (
+                    <span className="px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded">
+                      SALE
+                    </span>
+                  )}
+                </>
               )}
               {(() => {
                 const pct = tradePctMap?.[product.id] || 0;

@@ -121,6 +121,9 @@ export default function OrdersPage() {
   // draft. Committing sends a PATCH and refreshes the selected order.
   const [notesDraft, setNotesDraft] = useState<string | null>(null);
   const [savingNotes, setSavingNotes] = useState(false);
+  // Second note box (Sally, 26 Aug): staff-only internal note, edited
+  // the same way but saved to order.internalNotes.
+  const [internalNotesDraft, setInternalNotesDraft] = useState<string | null>(null);
 
   const saveOrderNotes = async () => {
     if (!selectedOrder || notesDraft === null) return;
@@ -136,6 +139,29 @@ export default function OrdersPage() {
       toast.success('Notes saved');
     } catch {
       toast.error('Failed to save notes');
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  const saveInternalNotes = async () => {
+    if (!selectedOrder || internalNotesDraft === null) return;
+    setSavingNotes(true);
+    try {
+      await ordersApi.updateNotes(
+        selectedOrder.id,
+        undefined,
+        internalNotesDraft.trim() || null,
+      );
+      const fresh = await ordersApi.getOrder(selectedOrder.id);
+      setSelectedOrder({
+        ...fresh.data.data.order,
+        refunds: selectedOrder?.refunds || [],
+      });
+      setInternalNotesDraft(null);
+      toast.success('Internal note saved');
+    } catch {
+      toast.error('Failed to save internal note');
     } finally {
       setSavingNotes(false);
     }
@@ -1055,7 +1081,9 @@ export default function OrdersPage() {
                   is opened. */}
               <div className="border-t border-gray-700 pt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm text-gray-400">Notes</p>
+                  <p className="text-sm text-gray-400">
+                    Customer note <span className="text-gray-600">(prints on invoice)</span>
+                  </p>
                   {notesDraft === null && (
                     <button
                       onClick={() =>
@@ -1082,7 +1110,7 @@ export default function OrdersPage() {
                       onChange={(e) => setNotesDraft(e.target.value)}
                       className="input w-full text-sm"
                       rows={3}
-                      placeholder="Follow-up context, pickup times, supplier ETA…"
+                      placeholder="Delivery instructions, pickup date… (prints on invoice)"
                       autoFocus
                     />
                     <div className="flex justify-end gap-2 mt-2">
@@ -1094,6 +1122,60 @@ export default function OrdersPage() {
                       </button>
                       <button
                         onClick={saveOrderNotes}
+                        disabled={savingNotes}
+                        className="btn-primary text-xs disabled:opacity-50"
+                      >
+                        {savingNotes ? 'Saving…' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Internal note — staff-only, never printed (Sally, 26 Aug). */}
+              <div className="border-t border-gray-700 pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm text-gray-400">
+                    Internal note <span className="text-gray-600">(staff only — never printed)</span>
+                  </p>
+                  {internalNotesDraft === null && (
+                    <button
+                      onClick={() =>
+                        setInternalNotesDraft(selectedOrder.internalNotes || '')
+                      }
+                      className="text-xs text-primary-400 hover:text-primary-300"
+                    >
+                      {selectedOrder.internalNotes ? 'Edit' : 'Add note'}
+                    </button>
+                  )}
+                </div>
+                {internalNotesDraft === null ? (
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                    {selectedOrder.internalNotes || (
+                      <span className="text-gray-500 italic">
+                        No internal note on this order.
+                      </span>
+                    )}
+                  </p>
+                ) : (
+                  <div>
+                    <textarea
+                      value={internalNotesDraft}
+                      onChange={(e) => setInternalNotesDraft(e.target.value)}
+                      className="input w-full text-sm"
+                      rows={3}
+                      placeholder="Supplier ETA, chase-ups, anything the customer shouldn't see…"
+                      autoFocus
+                    />
+                    <div className="flex justify-end gap-2 mt-2">
+                      <button
+                        onClick={() => setInternalNotesDraft(null)}
+                        className="btn-secondary text-xs"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={saveInternalNotes}
                         disabled={savingNotes}
                         className="btn-primary text-xs disabled:opacity-50"
                       >

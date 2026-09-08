@@ -127,8 +127,18 @@ export const ordersApi = {
   linkCustomer: (orderId: number, customerId: number) =>
     api.patch(`/orders/${orderId}/customer`, { customerId }),
 
-  updateNotes: (orderId: number, notes: string | null) =>
-    api.patch(`/orders/${orderId}/notes`, { notes }),
+  // Either field may be omitted to leave it untouched: `notes` is the
+  // customer-facing note (prints on the invoice), `internalNotes` is
+  // staff-only.
+  updateNotes: (
+    orderId: number,
+    notes?: string | null,
+    internalNotes?: string | null,
+  ) =>
+    api.patch(`/orders/${orderId}/notes`, {
+      ...(notes !== undefined ? { notes } : {}),
+      ...(internalNotes !== undefined ? { internalNotes } : {}),
+    }),
 
   // Edit line items on an open order (backorder/layby/pending). Server
   // rewrites the whole item set + re-totals. Blocked on complete

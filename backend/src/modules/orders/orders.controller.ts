@@ -197,15 +197,28 @@ export class OrdersController {
   }
 
   @Patch(':id/notes')
-  @ApiOperation({ summary: 'Update the free-form staff notes on an order' })
+  @ApiOperation({
+    summary:
+      'Update order notes — customer-facing `notes` (printed on the invoice) and/or staff-only `internalNotes`',
+  })
   async updateNotes(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { notes: string | null },
+    @Body() body: { notes?: string | null; internalNotes?: string | null },
   ) {
-    const order = await this.ordersService.updateNotes(id, body?.notes ?? null);
+    const order = await this.ordersService.updateNotes(
+      id,
+      body?.notes,
+      body?.internalNotes,
+    );
     return {
       success: true,
-      data: { order: { id: order.id, notes: order.notes } },
+      data: {
+        order: {
+          id: order.id,
+          notes: order.notes,
+          internalNotes: order.internalNotes,
+        },
+      },
     };
   }
 

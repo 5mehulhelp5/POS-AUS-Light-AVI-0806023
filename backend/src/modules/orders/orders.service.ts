@@ -89,6 +89,8 @@ interface CreateOrderDto {
     amountTendered?: number;
   }>;
   notes?: string;
+  // Staff-only note (never printed on the invoice).
+  internalNotes?: string;
   // Optional name to snapshot on walk-in orders that have no customer FK.
   // Ignored when customerId is set.
   customerName?: string;
@@ -650,6 +652,7 @@ export class OrdersService {
         paymentStatus: initialPaymentStatus,
         syncStatus: OrderSyncStatus.PENDING,
         notes: dto.notes || null,
+        internalNotes: dto.internalNotes || null,
         // Walk-in orders can still carry a customer name (e.g. "John"
         // typed by the cashier) even without a Customer FK. When
         // customerId is set the linked row is authoritative, so we
@@ -1112,13 +1115,23 @@ export class OrdersService {
     return (await this.findById(orderId)) as Order;
   }
 
-  // Free-form staff notes on an order — used from the order-detail
-  // drawer so cashiers can jot follow-up context (e.g. "customer to
-  // pick up Sat", "waiting on Havit ETA"). Nulling the field clears it.
-  async updateNotes(orderId: number, notes: string | null): Promise<Order> {
+  // Free-form notes on an order — used from the order-detail drawer.
+  // Two boxes (Sally, 26 Aug): `notes` is customer-facing and prints on
+  // the invoice; `internalNotes` is staff-only. Passing undefined
+  // leaves a field untouched; null/empty clears it.
+  async updateNotes(
+    orderId: number,
+    notes: string | null | undefined,
+    internalNotes?: string | null,
+  ): Promise<Order> {
     const order = await this.orderRepository.findOne({ where: { id: orderId } });
     if (!order) throw new BadRequestException('Order not found');
-    order.notes = (notes && notes.trim()) || null;
+    if (notes !== undefined) {
+      order.notes = (notes && notes.trim()) || null;
+    }
+    if (internalNotes !== undefined) {
+      order.internalNotes = (internalNotes && internalNotes.trim()) || null;
+    }
     await this.orderRepository.save(order);
     return (await this.findById(orderId)) as Order;
   }

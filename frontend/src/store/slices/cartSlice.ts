@@ -68,6 +68,8 @@ interface CartState {
   taxAmount: number;
   grandTotal: number;
   notes: string;
+  // Staff-only note — never printed on the invoice (Sally, 26 Aug).
+  internalNotes: string;
   // Delivery method + fee picked in PaymentModal — mirrored here so the
   // cart sidebar can show a matching total. PaymentModal dispatches
   // setDelivery whenever the cashier flips the dropdown. Cleared on
@@ -92,6 +94,7 @@ const initialState: CartState = {
   taxAmount: 0,
   grandTotal: 0,
   notes: '',
+  internalNotes: '',
   deliveryType: 'pickup',
   deliveryFee: 0,
 };
@@ -370,6 +373,10 @@ const cartSlice = createSlice({
       state.notes = action.payload;
     },
 
+    setInternalNotes: (state, action: PayloadAction<string>) => {
+      state.internalNotes = action.payload;
+    },
+
     setExchangeContext: (
       state,
       action: PayloadAction<{ orderId: number; orderNumber: string } | null>,
@@ -442,6 +449,7 @@ const cartSlice = createSlice({
       state.taxAmount = 0;
       state.grandTotal = 0;
       state.notes = '';
+      state.internalNotes = '';
       state.deliveryType = 'pickup';
       state.deliveryFee = 0;
     },
@@ -498,6 +506,7 @@ export const {
   restoreCart,
   setTradeAutoDiscounts,
   setNotes,
+  setInternalNotes,
   setExchangeContext,
   loadQuote,
   clearCart,
