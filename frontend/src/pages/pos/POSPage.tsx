@@ -588,7 +588,7 @@ export default function POSPage() {
               finish the conversion.
             </span>
             <button
-              className="text-primary-300 hover:text-white text-xs underline"
+              className="text-primary-300 hover:text-pos-text text-xs underline"
               onClick={() => dispatch(clearCart())}
             >
               Cancel
@@ -605,7 +605,7 @@ export default function POSPage() {
               {' '}— store credit from the return can be applied at payment.
             </span>
             <button
-              className="text-cyan-300 hover:text-white text-xs underline"
+              className="text-cyan-300 hover:text-pos-text text-xs underline"
               onClick={() => dispatch(setExchangeContext(null))}
             >
               Cancel exchange
@@ -681,7 +681,7 @@ export default function POSPage() {
             />
             {searchQuery && (
               <button
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-pos-text"
                 onClick={() => setSearchQuery('')}
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -778,7 +778,7 @@ export default function POSPage() {
         {viewMode !== 'categories' && !searchCatId && (
           <div className="flex items-center gap-2 mb-4 text-sm">
             <button
-              className="text-gray-400 hover:text-white flex items-center gap-1"
+              className="text-gray-400 hover:text-pos-text flex items-center gap-1"
               onClick={handleBackToCategories}
             >
               <ChevronLeftIcon className="h-4 w-4" />
@@ -788,7 +788,7 @@ export default function POSPage() {
               <>
                 <span className="text-gray-600">/</span>
                 <button
-                  className="text-gray-400 hover:text-white"
+                  className="text-gray-400 hover:text-pos-text"
                   onClick={handleBackToSubcategories}
                 >
                   {activeCategoryName}
@@ -807,7 +807,7 @@ export default function POSPage() {
                 className="bg-gradient-to-br from-primary-600 to-primary-800 rounded-xl p-6 text-center hover:from-primary-500 hover:to-primary-700 transition-all shadow-lg"
                 onClick={handleViewAllProducts}
               >
-                <div className="text-white font-semibold text-lg">All Products</div>
+                <div className="text-pos-text font-semibold text-lg">All Products</div>
               </button>
               {/* Virtual tile — opens the cut-to-length LED strip
                   calculator instead of a normal product list. Kept
@@ -816,7 +816,7 @@ export default function POSPage() {
                 className="bg-gradient-to-br from-amber-500 to-amber-700 rounded-xl p-6 text-center hover:from-amber-400 hover:to-amber-600 transition-all shadow-lg"
                 onClick={() => setShowStripCut(true)}
               >
-                <div className="text-white font-semibold text-lg">LED Strip Lights</div>
+                <div className="text-pos-text font-semibold text-lg">LED Strip Lights</div>
               </button>
               {categories.map((cat) => (
                 <button
@@ -824,7 +824,7 @@ export default function POSPage() {
                   className="bg-gradient-to-br from-pos-accent to-gray-800 rounded-xl p-6 text-center hover:from-gray-600 hover:to-gray-700 transition-all shadow-lg border border-gray-700"
                   onClick={() => handleCategorySelect(cat)}
                 >
-                  <div className="text-white font-semibold text-lg">{cat.name}</div>
+                  <div className="text-pos-text font-semibold text-lg">{cat.name}</div>
                 </button>
               ))}
             </div>
@@ -834,7 +834,7 @@ export default function POSPage() {
         {/* SUBCATEGORIES VIEW */}
         {viewMode === 'subcategories' && !searchCatId && (
           <div className="flex-1 overflow-y-auto">
-            <h2 className="text-lg font-bold text-white mb-4">{activeCategoryName}</h2>
+            <h2 className="text-lg font-bold text-pos-text mb-4">{activeCategoryName}</h2>
             <div className="grid grid-cols-4 gap-4">
               {/* All in this category tile */}
               <button
@@ -851,7 +851,7 @@ export default function POSPage() {
                   );
                 }}
               >
-                <div className="text-white font-semibold text-lg">All {activeCategoryName}</div>
+                <div className="text-pos-text font-semibold text-lg">All {activeCategoryName}</div>
               </button>
               {subcategories.map((subcat) => (
                 <button
@@ -859,7 +859,7 @@ export default function POSPage() {
                   className="bg-gradient-to-br from-pos-accent to-gray-800 rounded-xl p-6 text-center hover:from-gray-600 hover:to-gray-700 transition-all shadow-lg border border-gray-700"
                   onClick={() => handleSubcategorySelect(subcat)}
                 >
-                  <div className="text-white font-semibold text-lg">{subcat.name}</div>
+                  <div className="text-pos-text font-semibold text-lg">{subcat.name}</div>
                 </button>
               ))}
             </div>
@@ -1063,7 +1063,7 @@ export default function POSPage() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold">Draft Orders</h3>
               <button
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-pos-text"
                 onClick={() => setShowDrafts(false)}
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -1132,7 +1132,7 @@ export default function POSPage() {
           <div className="modal-content max-w-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold">Add Custom Item</h3>
-              <button className="text-gray-400 hover:text-white" onClick={() => setShowCustomItem(false)}>
+              <button className="text-gray-400 hover:text-pos-text" onClick={() => setShowCustomItem(false)}>
                 <XMarkIcon className="h-5 w-5" />
               </button>
             </div>

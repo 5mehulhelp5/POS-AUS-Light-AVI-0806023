@@ -169,7 +169,7 @@ export default function WarrantiesPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-pos-bg text-white p-6">
+    <div className="h-full overflow-y-auto bg-pos-bg text-pos-text p-6">
       <div className="max-w-6xl mx-auto">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -303,7 +303,7 @@ export default function WarrantiesPage() {
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
           <div
-            className="bg-pos-card border border-gray-700 rounded-lg shadow-2xl max-w-2xl w-full p-6 text-white max-h-[90vh] overflow-y-auto"
+            className="bg-pos-card border border-gray-700 rounded-lg shadow-2xl max-w-2xl w-full p-6 text-pos-text max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-bold mb-4">
@@ -409,7 +409,7 @@ export default function WarrantiesPage() {
             <div className="flex justify-end gap-2 mt-5">
               <button
                 onClick={() => setShowModal(false)}
-                className="btn bg-gray-700 text-white"
+                className="btn bg-gray-700 text-pos-text"
               >
                 Cancel
               </button>

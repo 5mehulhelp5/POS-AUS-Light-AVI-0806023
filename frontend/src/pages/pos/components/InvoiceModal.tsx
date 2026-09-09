@@ -188,10 +188,10 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="bg-white rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
+        className="paper bg-white rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-gray-800 text-white p-4 flex items-center justify-between z-10 no-print">
+        <div className="sticky top-0 bg-gray-800 text-pos-text p-4 flex items-center justify-between z-10 no-print">
           <h2 className="text-lg font-bold">Invoice Preview</h2>
           <div className="flex items-center gap-3">
             <button className="btn-sm bg-primary-600 text-white flex items-center gap-2" onClick={handlePrint}>
@@ -200,7 +200,7 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
             <button className="btn-sm bg-green-600 text-white flex items-center gap-2" onClick={handleSavePdf}>
               <ArrowDownTrayIcon className="h-4 w-4" /> Save PDF
             </button>
-            <button className="text-gray-400 hover:text-white" onClick={onClose}>
+            <button className="text-gray-400 hover:text-pos-text" onClick={onClose}>
               <XMarkIcon className="h-6 w-6" />
             </button>
           </div>

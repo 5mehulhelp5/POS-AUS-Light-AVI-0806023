@@ -679,7 +679,7 @@ export default function CartPanel({
                             Apply
                           </button>
                           <button
-                            className="btn-sm bg-gray-600 text-white px-1.5 py-1"
+                            className="btn-sm bg-gray-600 text-pos-text px-1.5 py-1"
                             onClick={() => {
                               setEditingItemDiscount(null);
                               setItemDiscountValue('');
@@ -791,7 +791,7 @@ export default function CartPanel({
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold">Apply Further Discount</h3>
               <button
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-pos-text"
                 onClick={() => setShowDiscountModal(false)}
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -913,7 +913,7 @@ export default function CartPanel({
                 {showCreateCustomer ? 'Create New Customer' : 'Create / Search Customer'}
               </h3>
               <button
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-pos-text"
                 onClick={() => setShowCustomerModal(false)}
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -1106,7 +1106,7 @@ export default function CartPanel({
                         className={`px-3 py-2 rounded border text-sm font-semibold transition-colors ${
                           !newCustIsTrade
                             ? 'bg-primary-600 border-primary-500 text-white'
-                            : 'bg-pos-card border-gray-700 text-gray-400 hover:text-white'
+                            : 'bg-pos-card border-gray-700 text-gray-400 hover:text-pos-text'
                         }`}
                       >
                         Retail
@@ -1117,7 +1117,7 @@ export default function CartPanel({
                         className={`px-3 py-2 rounded border text-sm font-semibold transition-colors ${
                           newCustIsTrade
                             ? 'bg-amber-600 border-amber-500 text-white'
-                            : 'bg-pos-card border-gray-700 text-gray-400 hover:text-white'
+                            : 'bg-pos-card border-gray-700 text-gray-400 hover:text-pos-text'
                         }`}
                       >
                         Trade

@@ -485,7 +485,7 @@ export default function UsersPage() {
                     setShowCreateModal(false);
                     setCreateError('');
                   }}
-                  className="px-4 py-2 text-gray-400 hover:text-white"
+                  className="px-4 py-2 text-gray-400 hover:text-pos-text"
                 >
                   Cancel
                 </button>

@@ -276,6 +276,7 @@ export default function ProductDetailModal({
                     onClick={prevImage}
                     className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/80 rounded-full p-1"
                   >
+                    {/* white in both themes — sits on the bg-black/50 overlay */}
                     <ChevronLeftIcon className="h-5 w-5 text-white" />
                   </button>
                   <button
@@ -316,8 +317,8 @@ export default function ProductDetailModal({
                   key={t.id}
                   className={`flex-1 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                     tab === t.id
-                      ? 'border-primary-500 text-white'
-                      : 'border-transparent text-gray-400 hover:text-white'
+                      ? 'border-primary-500 text-pos-text'
+                      : 'border-transparent text-gray-400 hover:text-pos-text'
                   }`}
                   onClick={() => setTab(t.id as Tab)}
                 >

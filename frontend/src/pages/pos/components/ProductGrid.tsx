@@ -116,7 +116,7 @@ export default function ProductGrid({
 
               {/* View details overlay on hover */}
               <div className="absolute inset-0 bg-primary-600/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="flex flex-col items-center gap-1 text-white">
+                <div className="flex flex-col items-center gap-1 text-pos-text">
                   <InformationCircleIcon className="h-8 w-8" />
                   <span className="text-xs font-semibold">View Details</span>
                 </div>

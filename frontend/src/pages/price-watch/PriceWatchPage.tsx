@@ -145,7 +145,7 @@ export default function PriceWatchPage() {
 
   return (
     // MainLayout's <main> is overflow-hidden — each page scrolls itself.
-    <div className="p-6 text-white h-full overflow-y-auto">
+    <div className="p-6 text-pos-text h-full overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-bold">Competitor Prices</h1>

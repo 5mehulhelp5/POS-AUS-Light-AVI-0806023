@@ -141,7 +141,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
         <div className="max-w-4xl mx-auto pb-8">
           <div className="flex justify-between items-center py-4">
             <div>
-              <h2 className="text-xl font-bold text-white">Edit Order Items</h2>
+              <h2 className="text-xl font-bold text-pos-text">Edit Order Items</h2>
               <p className="text-xs text-gray-400">
                 {order.orderNumber} · status {order.status}
               </p>
@@ -149,14 +149,14 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
             <button
               onClick={onClose}
               disabled={saving}
-              className="text-gray-400 hover:text-white"
+              className="text-gray-400 hover:text-pos-text"
             >
               <XMarkIcon className="h-6 w-6" />
             </button>
           </div>
 
           <div className="bg-pos-card border border-gray-700 rounded-xl p-4">
-            <table className="w-full text-sm text-white">
+            <table className="w-full text-sm text-pos-text">
               <thead className="text-xs text-gray-400 uppercase">
                 <tr>
                   <th className="text-left py-2">Item</th>
@@ -190,7 +190,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                       <input
                         type="number"
                         min={1}
-                        className="w-16 bg-pos-bg border border-gray-700 rounded px-2 py-1 text-center text-white"
+                        className="w-16 bg-pos-bg border border-gray-700 rounded px-2 py-1 text-center text-pos-text"
                         value={r.quantity}
                         onChange={(e) =>
                           updateRow(i, {
@@ -204,7 +204,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                         type="number"
                         step="0.01"
                         min={0}
-                        className="w-20 bg-pos-bg border border-gray-700 rounded px-2 py-1 text-right text-white disabled:opacity-40"
+                        className="w-20 bg-pos-bg border border-gray-700 rounded px-2 py-1 text-right text-pos-text disabled:opacity-40"
                         value={r.unitPrice}
                         disabled={!r.isBackorder && !r.isCustom}
                         onChange={(e) =>
@@ -224,7 +224,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                         type="number"
                         min={0}
                         max={100}
-                        className="w-14 bg-pos-bg border border-gray-700 rounded px-2 py-1 text-center text-white"
+                        className="w-14 bg-pos-bg border border-gray-700 rounded px-2 py-1 text-center text-pos-text"
                         value={r.discountPercent}
                         onChange={(e) =>
                           updateRow(i, {
@@ -268,7 +268,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                     <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
                     <input
                       autoFocus
-                      className="w-full bg-pos-bg border border-gray-700 rounded-lg pl-10 pr-3 py-2 text-sm text-white"
+                      className="w-full bg-pos-bg border border-gray-700 rounded-lg pl-10 pr-3 py-2 text-sm text-pos-text"
                       placeholder="Search product name, SKU, or barcode…"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
@@ -285,7 +285,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                           onClick={() => addProduct(p)}
                           className="w-full text-left px-3 py-2 hover:bg-pos-accent border-b border-gray-800 last:border-b-0"
                         >
-                          <div className="text-sm text-white">{p.name}</div>
+                          <div className="text-sm text-pos-text">{p.name}</div>
                           <div className="text-xs text-gray-500">
                             {p.sku} · ${Number(p.price).toFixed(2)}
                           </div>
@@ -299,7 +299,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                       setSearch('');
                       setSearchResults([]);
                     }}
-                    className="text-xs text-gray-500 hover:text-white mt-2"
+                    className="text-xs text-gray-500 hover:text-pos-text mt-2"
                   >
                     Cancel search
                   </button>
@@ -320,7 +320,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                     <span>${deliveryFee.toFixed(2)}</span>
                   </div>
                 )}
-                <div className="flex justify-between font-bold text-white text-base pt-1 border-t border-gray-800">
+                <div className="flex justify-between font-bold text-pos-text text-base pt-1 border-t border-gray-800">
                   <span>Total</span>
                   <span>${grandTotal.toFixed(2)}</span>
                 </div>
@@ -332,7 +332,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
             <button
               onClick={onClose}
               disabled={saving}
-              className="btn bg-gray-700 text-white"
+              className="btn bg-gray-700 text-pos-text"
             >
               Cancel
             </button>

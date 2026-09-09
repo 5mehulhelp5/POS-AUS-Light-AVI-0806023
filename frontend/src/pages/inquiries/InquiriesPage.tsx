@@ -520,7 +520,7 @@ export default function InquiriesPage() {
             </div>
             <div className="flex gap-3 mt-4">
               <button
-                className="btn-sm flex-1 bg-gray-600 text-white"
+                className="btn-sm flex-1 bg-gray-600 text-pos-text"
                 onClick={() => setShowAddModal(false)}
               >
                 Cancel
@@ -663,7 +663,7 @@ export default function InquiriesPage() {
             </div>
             <div className="flex gap-3 mt-4">
               <button
-                className="btn-sm flex-1 bg-gray-600 text-white"
+                className="btn-sm flex-1 bg-gray-600 text-pos-text"
                 onClick={() => setEditingInquiry(null)}
               >
                 Cancel

@@ -5,7 +5,10 @@ import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import App from './App';
 import { store } from './store';
+import { initTheme } from './utils/theme';
 import './index.css';
+
+initTheme();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -17,9 +20,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           toastOptions={{
             duration: 3000,
             style: {
-              background: '#1a1a2e',
-              color: '#e8e8e8',
-              border: '1px solid #0f3460',
+              background: 'rgb(var(--pos-card))',
+              color: 'rgb(var(--pos-text))',
+              border: '1px solid rgb(var(--gray-700))',
             },
           }}
         />

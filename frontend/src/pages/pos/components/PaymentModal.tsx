@@ -1336,7 +1336,7 @@ export default function PaymentModal({
                     className={`flex-1 px-3 py-2 rounded-lg border text-sm font-semibold capitalize transition-colors ${
                       deliveryRegion === region
                         ? 'bg-primary-600 border-primary-500 text-white'
-                        : 'bg-pos-card border-gray-700 text-gray-400 hover:text-white'
+                        : 'bg-pos-card border-gray-700 text-gray-400 hover:text-pos-text'
                     }`}
                   >
                     {region}

@@ -1482,7 +1482,7 @@ export default function QuotesPage() {
                   </div>
                   <div className="flex gap-2">
                     <button
-                      className="btn-sm bg-gray-600 text-white"
+                      className="btn-sm bg-gray-600 text-pos-text"
                       onClick={() => { setShowCustomItem(false); setCustomItemName(''); setCustomItemPrice(''); setCustomItemSku(''); }}
                     >
                       Cancel

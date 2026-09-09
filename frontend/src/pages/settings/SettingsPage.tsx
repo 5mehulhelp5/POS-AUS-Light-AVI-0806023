@@ -1603,7 +1603,7 @@ export default function SettingsPage() {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setEditingRole(null)}
-                className="px-4 py-2 text-gray-400 hover:text-white"
+                className="px-4 py-2 text-gray-400 hover:text-pos-text"
               >
                 Cancel
               </button>

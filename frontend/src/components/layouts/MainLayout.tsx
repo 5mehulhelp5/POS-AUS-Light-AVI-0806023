@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
+  SunIcon,
+  MoonIcon,
   ShoppingCartIcon,
   ClipboardDocumentListIcon,
   UsersIcon,
@@ -16,6 +19,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { RootState, AppDispatch } from '../../store';
 import { logout } from '../../store/slices/authSlice';
+import { getTheme, applyTheme, Theme } from '../../utils/theme';
 
 const navItems = [
   { to: '/pos', label: 'Products', icon: ShoppingCartIcon },
@@ -47,6 +51,13 @@ export default function MainLayout() {
     navigate('/login');
   };
 
+  const [theme, setTheme] = useState<Theme>(getTheme);
+  const toggleTheme = () => {
+    const next: Theme = theme === 'day' ? 'night' : 'day';
+    applyTheme(next);
+    setTheme(next);
+  };
+
   const isAdmin = user?.role.name === 'admin';
   const isManagerOrAdmin = user?.role.name === 'admin' || user?.role.name === 'manager';
 
@@ -69,7 +80,7 @@ export default function MainLayout() {
                 `flex flex-col items-center justify-center h-12 mx-1 rounded-lg transition-colors ${
                   isActive
                     ? 'bg-primary-600 text-white'
-                    : 'text-gray-400 hover:bg-pos-accent hover:text-white'
+                    : 'text-gray-400 hover:bg-pos-accent hover:text-pos-text'
                 }`
               }
             >
@@ -86,7 +97,7 @@ export default function MainLayout() {
                 `flex flex-col items-center justify-center h-12 mx-1 rounded-lg transition-colors ${
                   isActive
                     ? 'bg-primary-600 text-white'
-                    : 'text-gray-400 hover:bg-pos-accent hover:text-white'
+                    : 'text-gray-400 hover:bg-pos-accent hover:text-pos-text'
                 }`
               }
             >
@@ -106,7 +117,7 @@ export default function MainLayout() {
                     `flex flex-col items-center justify-center h-12 mx-1 rounded-lg transition-colors ${
                       isActive
                         ? 'bg-primary-600 text-white'
-                        : 'text-gray-400 hover:bg-pos-accent hover:text-white'
+                        : 'text-gray-400 hover:bg-pos-accent hover:text-pos-text'
                     }`
                   }
                 >
@@ -120,6 +131,14 @@ export default function MainLayout() {
 
         {/* User & Logout */}
         <div className="border-t border-gray-700 p-1">
+          <button
+            onClick={toggleTheme}
+            className="w-full flex flex-col items-center justify-center h-10 rounded-lg text-gray-400 hover:bg-pos-accent hover:text-pos-text transition-colors mb-1"
+            title={theme === 'day' ? 'Switch to night mode' : 'Switch to day mode'}
+          >
+            {theme === 'day' ? <MoonIcon className="h-4 w-4" /> : <SunIcon className="h-4 w-4" />}
+            <span className="text-[10px] mt-0.5">{theme === 'day' ? 'Night' : 'Day'}</span>
+          </button>
           <div className="flex flex-col items-center text-center mb-1">
             <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
               {user?.firstName[0]}

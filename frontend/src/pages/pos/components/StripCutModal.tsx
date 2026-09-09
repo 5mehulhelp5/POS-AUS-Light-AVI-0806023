@@ -251,7 +251,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal-content bg-pos-bg text-white"
+        className="modal-content bg-pos-bg text-pos-text"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="max-w-4xl mx-auto pb-10">
@@ -262,7 +262,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                 <ScissorsIcon className="h-6 w-6" />
               </div>
               <div>
-                <div className="text-xl font-bold text-white">Strip Cut Counter</div>
+                <div className="text-xl font-bold text-pos-text">Strip Cut Counter</div>
                 <div className="text-xs text-gray-400">
                   Staff order tool — cut-to-length LED strip
                 </div>
@@ -281,7 +281,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
               </button>
               <button
                 onClick={onClose}
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-pos-text"
                 aria-label="Close"
               >
                 <XMarkIcon className="h-6 w-6" />
@@ -318,7 +318,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                 }}
                 onBlur={() => setTimeout(() => setPickerOpen(false), 150)}
                 placeholder={`Search ${products.length} strips — name or SKU`}
-                className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
               {pickerOpen && (
                 <ul className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto bg-pos-card border border-gray-700 rounded-md shadow-xl">
@@ -339,7 +339,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                             setPickerOpen(false);
                           }}
                           className={`w-full text-left px-3 py-2 hover:bg-pos-accent/40 ${
-                            p.id === productId ? 'text-amber-400' : 'text-white'
+                            p.id === productId ? 'text-amber-400' : 'text-pos-text'
                           }`}
                         >
                           <span className="block text-sm">{p.name}</span>
@@ -355,13 +355,13 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-400">
-              <span>Rate <span className="font-bold text-white">${perM.toFixed(2)}</span>/m</span>
-              <span>Cuts every <span className="font-bold text-white">{formatLength(product.cutMm)}</span></span>
-              <span>Max run <span className="font-bold text-white">{product.maxRunM}m</span></span>
+              <span>Rate <span className="font-bold text-pos-text">${perM.toFixed(2)}</span>/m</span>
+              <span>Cuts every <span className="font-bold text-pos-text">{formatLength(product.cutMm)}</span></span>
+              <span>Max run <span className="font-bold text-pos-text">{product.maxRunM}m</span></span>
               <span>
-                Tail <span className="font-bold text-white">{product.includedTailM}m</span> incl
+                Tail <span className="font-bold text-pos-text">{product.includedTailM}m</span> incl
                 {' · '}
-                <span className="font-bold text-white">+${product.tailPerM.toFixed(2)}</span>/m
+                <span className="font-bold text-pos-text">+${product.tailPerM.toFixed(2)}</span>/m
               </span>
             </div>
 
@@ -376,7 +376,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                   inputMode="decimal"
                   min={0}
                   step={0.5}
-                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   value={lengthMStr}
                   onChange={(e) => setLengthMStr(e.target.value)}
                   placeholder="e.g. 3.2"
@@ -400,7 +400,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                   inputMode="numeric"
                   min={1}
                   step={1}
-                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text focus:outline-none focus:ring-2 focus:ring-amber-500"
                   value={qtyStr}
                   onChange={(e) => setQtyStr(e.target.value)}
                 />
@@ -415,7 +415,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                 <input
                   type="number"
                   inputMode="decimal"
-                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text focus:outline-none focus:ring-2 focus:ring-amber-500"
                   value={tailMStr}
                   onChange={(e) => setTailMStr(e.target.value)}
                   min={0}
@@ -470,7 +470,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
           <div className="bg-pos-card rounded-xl border border-gray-700 p-5">
             <div className="flex items-center gap-2 mb-3">
               <ClipboardDocumentIcon className="h-5 w-5 text-gray-400" />
-              <div className="font-bold text-white">Order</div>
+              <div className="font-bold text-pos-text">Order</div>
               <div className="text-xs text-gray-500">({order.length} lines)</div>
             </div>
 
@@ -483,7 +483,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                 {order.map((l) => (
                   <li key={l.id} className="py-3 flex items-center gap-3">
                     <div className="flex-1">
-                      <div className="text-sm font-semibold text-white">
+                      <div className="text-sm font-semibold text-pos-text">
                         {l.product.name}
                       </div>
                       <div className="text-xs text-gray-400">
@@ -492,7 +492,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
                         {l.isTrade ? ' · trade' : ''}
                       </div>
                     </div>
-                    <div className="text-sm font-bold text-white">
+                    <div className="text-sm font-bold text-pos-text">
                       {money(l.linePrice)}
                     </div>
                     <button

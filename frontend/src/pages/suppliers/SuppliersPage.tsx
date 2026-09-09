@@ -104,7 +104,7 @@ export default function SuppliersPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-pos-bg text-white p-6">
+    <div className="h-full overflow-y-auto bg-pos-bg text-pos-text p-6">
       <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -129,7 +129,7 @@ export default function SuppliersPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name, rep, or phone…"
-            className="w-full pl-10 pr-3 py-2 bg-pos-card border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-primary-500"
+            className="w-full pl-10 pr-3 py-2 bg-pos-card border border-gray-700 rounded-lg text-pos-text placeholder-gray-500 focus:outline-none focus:border-primary-500"
           />
         </div>
 
@@ -248,7 +248,7 @@ export default function SuppliersPage() {
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
           <div
-            className="bg-pos-card border border-gray-700 rounded-lg shadow-2xl max-w-lg w-full p-6 text-white"
+            className="bg-pos-card border border-gray-700 rounded-lg shadow-2xl max-w-lg w-full p-6 text-pos-text"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-bold mb-4">
@@ -310,7 +310,7 @@ export default function SuppliersPage() {
             <div className="flex justify-end gap-2 mt-5">
               <button
                 onClick={() => setShowModal(false)}
-                className="btn bg-gray-700 text-white"
+                className="btn bg-gray-700 text-pos-text"
               >
                 Cancel
               </button>

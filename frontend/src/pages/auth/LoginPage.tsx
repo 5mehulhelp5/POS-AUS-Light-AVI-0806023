@@ -88,7 +88,7 @@ export default function LoginPage() {
           className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
             mode === 'pin'
               ? 'bg-primary-600 text-white'
-              : 'text-gray-400 hover:text-white'
+              : 'text-gray-400 hover:text-pos-text'
           }`}
           onClick={() => setMode('pin')}
         >
@@ -98,7 +98,7 @@ export default function LoginPage() {
           className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
             mode === 'email'
               ? 'bg-primary-600 text-white'
-              : 'text-gray-400 hover:text-white'
+              : 'text-gray-400 hover:text-pos-text'
           }`}
           onClick={() => setMode('email')}
         >

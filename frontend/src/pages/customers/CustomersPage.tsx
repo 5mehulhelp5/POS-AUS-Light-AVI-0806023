@@ -881,8 +881,8 @@ export default function CustomersPage() {
                   key={t.id}
                   className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                     detailTab === t.id
-                      ? 'border-primary-500 text-white'
-                      : 'border-transparent text-gray-400 hover:text-white'
+                      ? 'border-primary-500 text-pos-text'
+                      : 'border-transparent text-gray-400 hover:text-pos-text'
                   }`}
                   onClick={() => setDetailTab(t.id as any)}
                 >
