@@ -352,35 +352,25 @@ export default function PaymentModal({
       const isHeld =
         !!laybyHeldByProductId[it.productId] ||
         (LAYBY_ALL_FROM_TOGGLE && !isBack);
-      if (isBack) {
-        // Backorder may be a partial split (e.g. 2 of 4 backordered).
-        // Default to full quantity if no split was set.
-        const backQty = Math.min(
-          it.quantity,
-          Math.max(
-            0,
-            backorderQtyByProductId[it.productId] ?? it.quantity,
-          ),
-        );
-        const perUnit = it.quantity > 0 ? it.rowTotal / it.quantity : 0;
-        deferred += perUnit * backQty;
-        takeNow += perUnit * (it.quantity - backQty);
-      } else if (isHeld) {
-        // Layby may also be a partial split (e.g. 2 of 4 left behind on
-        // the shelf, 2 walked out today). Default to full quantity.
-        const heldQty = Math.min(
-          it.quantity,
-          Math.max(
-            0,
-            laybyHeldQtyByProductId[it.productId] ?? it.quantity,
-          ),
-        );
-        const perUnit = it.quantity > 0 ? it.rowTotal / it.quantity : 0;
-        deferred += perUnit * heldQty;
-        takeNow += perUnit * (it.quantity - heldQty);
-      } else {
-        takeNow += it.rowTotal;
-      }
+      // A line can be BOTH backorder and lay-by held (Sally, 9 Sep:
+      // "Back order 3 and Layby the 2"). The backorder split is taken
+      // first, the held split is clamped to whatever remains, and any
+      // leftover walks out today at full price.
+      const backQty = isBack
+        ? Math.min(
+            it.quantity,
+            Math.max(0, backorderQtyByProductId[it.productId] ?? it.quantity),
+          )
+        : 0;
+      const heldQty = isHeld
+        ? Math.min(
+            it.quantity - backQty,
+            Math.max(0, laybyHeldQtyByProductId[it.productId] ?? it.quantity),
+          )
+        : 0;
+      const perUnit = it.quantity > 0 ? it.rowTotal / it.quantity : 0;
+      deferred += perUnit * (backQty + heldQty);
+      takeNow += perUnit * (it.quantity - backQty - heldQty);
     }
     return {
       takeNowSubtotal: Math.round(takeNow * 100) / 100,
@@ -1931,78 +1921,112 @@ export default function PaymentModal({
                           </div>
                         )}
                       {/* Hold on Lay By — tick for in-stock items the customer is
-                          leaving behind until balance is paid. Mixed orders can
-                          have some lines held and others handed over today. */}
-                      {!backorderByProductId[item.productId] && (
-                        <label className="flex items-center gap-1.5 mt-1 text-xs text-gray-400 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={
-                              !!laybyHeldByProductId[item.productId] ||
-                              LAYBY_ALL_FROM_TOGGLE
-                            }
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setLaybyHeldByProductId((prev) => ({
-                                ...prev,
-                                [item.productId]: checked,
-                              }));
-                              setLaybyHeldQtyByProductId((prev) => {
-                                const next = { ...prev };
-                                if (checked) next[item.productId] = item.quantity;
-                                else delete next[item.productId];
-                                return next;
-                              });
-                            }}
-                            className="w-3.5 h-3.5"
-                          />
-                          <span>Hold on Lay By (customer leaves it here)</span>
-                        </label>
-                      )}
-                      {/* Per-line lay-by quantity split. Same model as
-                          backorder — defaults to full quantity, but the
-                          cashier can keep some on the shelf and hand the
-                          rest over today. */}
-                      {!backorderByProductId[item.productId] &&
+                          leaving behind until balance is paid. Can be combined
+                          with Backorder on the same line (Sally, 9 Sep: "Back
+                          order 3 and Layby the 2") — the backorder split is
+                          taken first, the held split covers the remainder. */}
+                      <label className="flex items-center gap-1.5 mt-1 text-xs text-gray-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={
+                            !!laybyHeldByProductId[item.productId] ||
+                            LAYBY_ALL_FROM_TOGGLE
+                          }
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setLaybyHeldByProductId((prev) => ({
+                              ...prev,
+                              [item.productId]: checked,
+                            }));
+                            setLaybyHeldQtyByProductId((prev) => {
+                              const next = { ...prev };
+                              // Default the held split to whatever the
+                              // backorder split hasn't claimed.
+                              if (checked)
+                                next[item.productId] = Math.max(
+                                  0,
+                                  item.quantity -
+                                    (backorderByProductId[item.productId]
+                                      ? (backorderQtyByProductId[item.productId] ??
+                                        item.quantity)
+                                      : 0),
+                                );
+                              else delete next[item.productId];
+                              return next;
+                            });
+                          }}
+                          className="w-3.5 h-3.5"
+                        />
+                        <span>Hold on Lay By (customer leaves it here)</span>
+                      </label>
+                      {/* Both ticked but backorder already claims every unit —
+                          tell the cashier how to actually split the line. */}
+                      {backorderByProductId[item.productId] &&
                         (laybyHeldByProductId[item.productId] ||
                           LAYBY_ALL_FROM_TOGGLE) &&
-                        item.quantity > 1 && (
-                          <div className="flex items-center gap-2 mt-1 ml-5 text-xs text-amber-300">
-                            <span>How many on Lay By?</span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={item.quantity}
-                              step={1}
-                              className="input py-0.5 px-1.5 text-xs w-14"
-                              value={
-                                laybyHeldQtyByProductId[item.productId] ??
-                                item.quantity
-                              }
-                              onChange={(e) => {
-                                const n = Math.min(
-                                  item.quantity,
-                                  Math.max(1, parseInt(e.target.value, 10) || 1),
-                                );
-                                setLaybyHeldQtyByProductId((prev) => ({
-                                  ...prev,
-                                  [item.productId]: n,
-                                }));
-                              }}
-                            />
-                            <span>of {item.quantity}</span>
-                            {(laybyHeldQtyByProductId[item.productId] ??
-                              item.quantity) <
-                              item.quantity && (
-                              <span className="text-gray-500">
-                                · {item.quantity -
-                                  (laybyHeldQtyByProductId[item.productId] ??
-                                    item.quantity)}{' '}
-                                taking home today
-                              </span>
-                            )}
-                          </div>
+                        (backorderQtyByProductId[item.productId] ??
+                          item.quantity) >= item.quantity && (
+                          <p className="ml-5 mt-1 text-[11px] text-amber-300">
+                            Backorder covers the full quantity — lower "how many
+                            on backorder" to hold some units on Lay By.
+                          </p>
                         )}
+                      {/* Per-line lay-by quantity split. Defaults to whatever
+                          the backorder split hasn't claimed; the leftover (if
+                          any) walks out today at full price. */}
+                      {(laybyHeldByProductId[item.productId] ||
+                        LAYBY_ALL_FROM_TOGGLE) &&
+                        item.quantity > 1 &&
+                        (() => {
+                          const backClaim = backorderByProductId[item.productId]
+                            ? Math.min(
+                                item.quantity,
+                                backorderQtyByProductId[item.productId] ??
+                                  item.quantity,
+                              )
+                            : 0;
+                          const maxHeld = item.quantity - backClaim;
+                          if (maxHeld <= 0) return null;
+                          const held = Math.min(
+                            maxHeld,
+                            laybyHeldQtyByProductId[item.productId] ?? maxHeld,
+                          );
+                          const takeHome = item.quantity - backClaim - held;
+                          return (
+                            <div className="flex items-center gap-2 mt-1 ml-5 text-xs text-amber-300">
+                              <span>How many on Lay By?</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={maxHeld}
+                                step={1}
+                                className="input py-0.5 px-1.5 text-xs w-14"
+                                value={held}
+                                onChange={(e) => {
+                                  const n = Math.min(
+                                    maxHeld,
+                                    Math.max(1, parseInt(e.target.value, 10) || 1),
+                                  );
+                                  setLaybyHeldQtyByProductId((prev) => ({
+                                    ...prev,
+                                    [item.productId]: n,
+                                  }));
+                                }}
+                              />
+                              <span>of {item.quantity}</span>
+                              {(backClaim > 0 || takeHome > 0) && (
+                                <span className="text-gray-500">
+                                  {backClaim > 0
+                                    ? ` · ${backClaim} on backorder`
+                                    : ''}
+                                  {takeHome > 0
+                                    ? ` · ${takeHome} taking home today`
+                                    : ''}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                     </>
                   )}
                 </div>

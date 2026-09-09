@@ -7,6 +7,7 @@ import { RootState } from '../../store';
 import { buildInvoiceData } from '../../utils/orderInvoice';
 import InvoiceModal from '../pos/components/InvoiceModal';
 import EditOrderItemsModal from './EditOrderItemsModal';
+import OrderHistoryTimeline from './OrderHistoryTimeline';
 import {
   MagnifyingGlassIcon,
   EyeIcon,
@@ -309,7 +310,9 @@ export default function OrdersPage() {
         };
       });
 
-      setRefundOrder(fullOrder);
+      // Refunds ride on the order object so the history timeline in
+      // this modal can render them (Sally opens orders through here).
+      setRefundOrder({ ...fullOrder, refunds: existingRefunds });
       setRefundItems(selections);
       setRefundReason('damaged');
       setRefundReasonText('');
@@ -462,6 +465,25 @@ export default function OrdersPage() {
       </span>
     );
   };
+
+  // Money already taken against an order (deposit + instalments) and
+  // what's still owed. Payments come back on the order detail payload.
+  const paidTotal = (o: any) =>
+    (o?.payments || [])
+      .filter((p: any) => !p.status || p.status === 'completed')
+      .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+  const balanceDue = (o: any) =>
+    Math.max(
+      0,
+      Math.round((parseFloat(o.grandTotal) - paidTotal(o)) * 100) / 100,
+    );
+  // Orders that can take a balance payment via the PAY flow: laybys and
+  // backorders that took a deposit (Sally, 9 Sep: POS ORDER 0067 needs a
+  // PAY button so the customer can complete payment).
+  const canTakePayment = (o: any) =>
+    ['layby_active', 'layby_expired'].includes(o.status) ||
+    (['backorder_pending', 'pending', 'processing'].includes(o.status) &&
+      o.paymentStatus !== 'paid');
 
   // Debounced customer search for the Link Customer flow
   useEffect(() => {
@@ -797,12 +819,14 @@ export default function OrdersPage() {
                       >
                         <PrinterIcon className="h-5 w-5" />
                       </button>
-                      {(order.status === 'layby_active' ||
-                        order.status === 'layby_expired') && (
+                      {/* PAY — any order still owed money (lay-by, or a
+                          backorder that took a deposit) can collect the
+                          balance from here (Sally, 9 Sep: order 0067). */}
+                      {canTakePayment(order) && (
                         <button
                           onClick={() => openLaybyPay(order)}
                           className="p-2 hover:bg-amber-500/20 text-amber-300 rounded"
-                          title="Take Lay By payment"
+                          title="PAY — take balance payment"
                         >
                           <BanknotesIcon className="h-5 w-5" />
                         </button>
@@ -932,7 +956,15 @@ export default function OrdersPage() {
                   <PrinterIcon className="h-4 w-4" /> Print Invoice
                 </button>
                 <div className="text-right">
-                  <h2 className="text-xl font-bold">{selectedOrder.orderNumber}</h2>
+                  {/* Status badge next to the order number (Sally, 9 Sep:
+                      "needs to say 'Complete'... and all other statuses"). */}
+                  <div className="flex items-center justify-end gap-2">
+                    {getStatusBadge(
+                      selectedOrder.status,
+                      (selectedOrder.exchangedToOrders || []).length > 0,
+                    )}
+                    <h2 className="text-xl font-bold">{selectedOrder.orderNumber}</h2>
+                  </div>
                   <p className="text-sm text-gray-400">{formatDate(selectedOrder.createdAt)}</p>
                 </div>
               </div>
@@ -996,12 +1028,15 @@ export default function OrdersPage() {
                 </div>
               </div>
 
-              {/* Layby actions */}
-              {(selectedOrder.status === 'layby_active' ||
-                selectedOrder.status === 'layby_expired') && (
+              {/* Balance-due actions — laybys AND deposit-paid backorders
+                  (Sally, 9 Sep: order 0067 took a deposit but had no way
+                  to complete payment). */}
+              {canTakePayment(selectedOrder) && (
                 <div className="border-t border-gray-700 pt-4 space-y-2">
                   <p className="text-sm font-medium text-amber-300">
-                    Lay By
+                    {selectedOrder.orderType === 'layby'
+                      ? 'Lay By'
+                      : 'Balance owing'}
                     {selectedOrder.laybyExpiresAt && (
                       <span className="text-xs text-gray-400 ml-2">
                         Expires {formatDate(selectedOrder.laybyExpiresAt)}
@@ -1013,9 +1048,9 @@ export default function OrdersPage() {
                       className="btn-primary bg-amber-600 hover:bg-amber-700 flex items-center gap-2"
                       onClick={() => openLaybyPay(selectedOrder)}
                     >
-                      <BanknotesIcon className="h-4 w-4" /> Take Payment
+                      <BanknotesIcon className="h-4 w-4" /> PAY — Take Payment
                     </button>
-                    {canManage && (
+                    {canManage && selectedOrder.orderType === 'layby' && (
                       <button
                         className="btn-secondary"
                         onClick={() => handleCancelLayby(selectedOrder)}
@@ -1046,6 +1081,23 @@ export default function OrdersPage() {
                   <span>Total</span>
                   <span>${parseFloat(selectedOrder.grandTotal).toFixed(2)}</span>
                 </div>
+                {/* Deposit / balance reflection (Sally, 9 Sep: order 0067
+                    "had a deposit taken and doesn't reflect this when
+                    clicking on the order"). Shown whenever the order
+                    isn't simply paid-in-full-and-done. */}
+                {(selectedOrder.payments || []).length > 0 &&
+                  balanceDue(selectedOrder) > 0.005 && (
+                    <div className="mt-2 pt-2 border-t border-gray-700 space-y-1">
+                      <div className="flex justify-between text-sm text-green-400">
+                        <span>Paid to date</span>
+                        <span>${paidTotal(selectedOrder).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between font-semibold text-amber-300">
+                        <span>Balance owing</span>
+                        <span>${balanceDue(selectedOrder).toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
                 {/* Refund total + net paid — only shown when at least
                     one refund exists so a normal order still reads
                     cleanly. Refund reasonText carries the 20% restock
@@ -1186,174 +1238,15 @@ export default function OrdersPage() {
                 )}
               </div>
 
-              {/* Order history timeline — the purchase plus every refund
-                  over time, so staff can see what's happened across
-                  repeat visits (Sally: customer refunds, comes back, etc). */}
+              {/* Order History — shared timeline component (also shown
+                  in the Refund/Edit modal, which is how Sally opens
+                  orders). Payments, refunds, exchanges, fulfilments and
+                  item edits, newest first. */}
               <div className="border-t border-gray-700 pt-4">
-                <p className="text-sm text-gray-400 mb-3">Order History</p>
-                <div className="relative pl-5 space-y-3">
-                  {/* vertical line */}
-                  <div className="absolute left-1.5 top-1 bottom-1 w-px bg-gray-700" />
-
-                  {/* Exchange cross-links — expanded to show the items
-                      that were swapped, not just the linked order
-                      numbers. "Original had X, exchanged for Y" is the
-                      question staff want answered when they open an
-                      exchanged order. */}
-                  {selectedOrder.exchangedToOrders?.map((e: any) => (
-                    <div key={`to-${e.id}`} className="relative">
-                      <div className="absolute -left-[14px] top-1.5 h-2.5 w-2.5 rounded-full bg-cyan-400 ring-2 ring-pos-card" />
-                      <div className="bg-cyan-500/10 border border-cyan-500/30 rounded p-3 text-sm text-cyan-200">
-                        <div className="font-semibold mb-1">
-                          Exchanged for {e.orderNumber}
-                        </div>
-                        {e.items && e.items.length > 0 && (
-                          <ul className="text-xs space-y-0.5 text-cyan-100">
-                            {e.items.map((it: any) => (
-                              <li key={it.id}>
-                                {it.quantity}× {it.name}
-                                <span className="text-cyan-300/70">
-                                  {' '}
-                                  · {it.sku} · ${Number(it.unitPrice).toFixed(2)}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {selectedOrder.exchangeFromOrder && (
-                    <div className="relative">
-                      <div className="absolute -left-[14px] top-1.5 h-2.5 w-2.5 rounded-full bg-cyan-400 ring-2 ring-pos-card" />
-                      <div className="bg-cyan-500/10 border border-cyan-500/30 rounded p-3 text-sm text-cyan-200">
-                        <div className="font-semibold mb-1">
-                          Replacement for {selectedOrder.exchangeFromOrder.orderNumber}
-                        </div>
-                        {selectedOrder.exchangeFromOrder.items &&
-                          selectedOrder.exchangeFromOrder.items.length > 0 && (
-                            <>
-                              <div className="text-xs mb-1 text-cyan-300/80">
-                                Returned:
-                              </div>
-                              <ul className="text-xs space-y-0.5 text-cyan-100">
-                                {selectedOrder.exchangeFromOrder.items.map(
-                                  (it: any) => (
-                                    <li key={it.id}>
-                                      {it.quantity}× {it.name}
-                                      <span className="text-cyan-300/70">
-                                        {' '}
-                                        · {it.sku} · $
-                                        {Number(it.unitPrice).toFixed(2)}
-                                      </span>
-                                    </li>
-                                  ),
-                                )}
-                              </ul>
-                            </>
-                          )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Refund events (newest first) */}
-                  {(selectedOrder.refunds || []).map((r: any) => {
-                    const tags: string[] = [];
-                    const isCash = /\[CASH REFUND\]/i.test(r.reasonText || '');
-                    tags.push(isCash ? 'Cash refund' : 'Store credit');
-                    const restockMatch = (r.reasonText || '').match(/\[20% RESTOCK FEE: \$([\d.]+) retained\]/i);
-                    if (restockMatch) tags.push(`20% restock fee $${restockMatch[1]} kept`);
-                    // Strip the bracketed tags from the human reason text.
-                    const cleanReason = (r.reasonText || '')
-                      .replace(/\[[^\]]*\]/g, '')
-                      .trim();
-                    return (
-                      <div key={r.id} className="relative">
-                        <div className="absolute -left-[14px] top-1.5 h-2.5 w-2.5 rounded-full bg-orange-400 ring-2 ring-pos-card" />
-                        <div className="bg-orange-500/10 border border-orange-500/30 rounded p-3 text-sm">
-                          <div className="flex justify-between mb-1">
-                            <span className="font-medium text-orange-300">
-                              {r.isFullRefund ? 'Full Refund' : 'Partial Refund'} — ${r.refundAmount.toFixed(2)}
-                            </span>
-                            <span className="text-gray-400">{formatDate(r.createdAt)}</span>
-                          </div>
-                          <div className="flex flex-wrap gap-1 mb-1">
-                            {tags.map((t) => (
-                              <span key={t} className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-600/30 text-orange-200">
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                          {/* Exactly what came back, so a partial refund
-                              is readable without opening the receipt. */}
-                          {(r.items || []).length > 0 && (
-                            <ul className="mb-2 mt-1 space-y-0.5">
-                              {r.items.map((ri: any) => (
-                                <li
-                                  key={ri.id}
-                                  className="flex justify-between text-xs text-gray-300"
-                                >
-                                  <span>
-                                    {ri.quantity}
-                                    {ri.originalQuantity
-                                      ? ` of ${ri.originalQuantity}`
-                                      : ''}{' '}
-                                    × {ri.name || `Item #${ri.orderItemId}`}
-                                    {ri.sku ? (
-                                      <span className="text-gray-500 font-mono">
-                                        {' '}
-                                        {ri.sku}
-                                      </span>
-                                    ) : null}
-                                    {ri.restock ? (
-                                      <span className="text-gray-500">
-                                        {' '}
-                                        · restocked
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                  <span className="font-medium">
-                                    ${Number(ri.amount).toFixed(2)}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                          <div className="text-xs text-gray-400">
-                            Reason: {REFUND_REASONS.find((x) => x.value === r.reason)?.label || r.reason}
-                            {cleanReason ? ` — "${cleanReason}"` : ''}
-                          </div>
-                          {r.user && (
-                            <div className="text-xs text-gray-500 mt-1">
-                              Processed by {r.user.firstName} {r.user.lastName}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* Order placed (oldest, at the bottom) */}
-                  <div className="relative">
-                    <div className="absolute -left-[14px] top-1.5 h-2.5 w-2.5 rounded-full bg-green-400 ring-2 ring-pos-card" />
-                    <div className="bg-pos-dark rounded p-3 text-sm">
-                      <div className="flex justify-between">
-                        <span className="font-medium text-green-300">
-                          Order placed — ${parseFloat(selectedOrder.grandTotal).toFixed(2)}
-                        </span>
-                        <span className="text-gray-400">{formatDate(selectedOrder.createdAt)}</span>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {selectedOrder.user
-                          ? `By ${selectedOrder.user.firstName} ${selectedOrder.user.lastName || ''}`
-                          : ''}
-                        {selectedOrder.customer
-                          ? ` · ${selectedOrder.customer.firstName} ${selectedOrder.customer.lastName || ''}`
-                          : ' · Walk-in'}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <OrderHistoryTimeline
+                  order={selectedOrder}
+                  refunds={selectedOrder.refunds || []}
+                />
               </div>
             </div>
             </div>
@@ -1375,7 +1268,11 @@ export default function OrdersPage() {
                 <ArrowLeftIcon className="h-5 w-5" /> Back
               </button>
               <div className="text-right">
-                <h2 className="text-xl font-bold">Lay By Payment</h2>
+                <h2 className="text-xl font-bold">
+                  {(laybyPayOrder as any).orderType === 'layby'
+                    ? 'Lay By Payment'
+                    : 'Balance Payment'}
+                </h2>
                 <p className="text-sm text-gray-400">{laybyPayOrder.orderNumber}</p>
               </div>
             </div>
@@ -1525,9 +1422,36 @@ export default function OrdersPage() {
               >
                 <ArrowLeftIcon className="h-5 w-5" /> Back
               </button>
-              <div className="text-right">
-                <h2 className="text-xl font-bold">Refund Order {refundOrder.orderNumber}</h2>
-                <p className="text-sm text-gray-400">Select items and quantities to refund</p>
+              <div className="flex items-center gap-3">
+                {/* PAY — this screen is how Sally opens orders, so the
+                    balance-collection entry point lives here too. */}
+                {canTakePayment(refundOrder) && (
+                  <button
+                    className="btn-primary bg-amber-600 hover:bg-amber-700 flex items-center gap-2 text-sm"
+                    onClick={() => {
+                      const o = refundOrder;
+                      setRefundOrder(null);
+                      openLaybyPay(o);
+                    }}
+                    disabled={isProcessingRefund}
+                    title="Take the balance payment on this order"
+                  >
+                    <BanknotesIcon className="h-4 w-4" /> PAY
+                  </button>
+                )}
+                <div className="text-right">
+                  {/* The order's real status up top (Sally, 9 Sep: the
+                      header read "Refund" on a completed order — it must
+                      say Complete / Back Order / Partial Refund etc). */}
+                  <div className="flex items-center justify-end gap-2">
+                    {getStatusBadge(
+                      refundOrder.status,
+                      (refundOrder.exchangedToOrders || []).length > 0,
+                    )}
+                    <h2 className="text-xl font-bold">Order {refundOrder.orderNumber}</h2>
+                  </div>
+                  <p className="text-sm text-gray-400">Select items and quantities to refund</p>
+                </div>
               </div>
             </div>
 
@@ -1833,6 +1757,15 @@ export default function OrdersPage() {
                 </button>
               </div>
             </div>
+
+            {/* Order History (Sally, 9 Sep) — refunds, exchanges,
+                payments and item edits, right where she opens orders. */}
+            <div className="border-t border-gray-700 pt-4 mt-6">
+              <OrderHistoryTimeline
+                order={refundOrder}
+                refunds={refundOrder.refunds || []}
+              />
+            </div>
             </div>
           </div>
         </div>
@@ -1927,7 +1860,13 @@ export default function OrdersPage() {
           <div className="modal-content bg-white text-black p-8 print:shadow-none printable-root">
             <div className="text-center mb-4">
               <h2 className="text-2xl font-bold">
-                {laybyReceipt.isFinal ? 'LAY BY FINAL PAYMENT' : 'LAY BY PAYMENT RECEIPT'}
+                {(laybyReceipt.order as any).orderType === 'layby'
+                  ? laybyReceipt.isFinal
+                    ? 'LAY BY FINAL PAYMENT'
+                    : 'LAY BY PAYMENT RECEIPT'
+                  : laybyReceipt.isFinal
+                    ? 'FINAL PAYMENT'
+                    : 'PAYMENT RECEIPT'}
               </h2>
               <p className="text-sm text-gray-600">Australian Lighting &amp; Fans</p>
             </div>
@@ -2003,7 +1942,9 @@ export default function OrdersPage() {
               </div>
               {laybyReceipt.isFinal && (
                 <p className="text-xs text-gray-600 pt-2">
-                  Lay By paid in full — goods may be released to the customer.
+                  {(laybyReceipt.order as any).orderType === 'layby'
+                    ? 'Lay By paid in full — goods may be released to the customer.'
+                    : 'Order paid in full.'}
                 </p>
               )}
             </div>
@@ -2041,6 +1982,50 @@ export default function OrdersPage() {
                 <span>Original Order:</span>
                 <span className="font-medium">{completedRefund.order.orderNumber}</span>
               </div>
+              {/* Customer details on the refund template (Sally, 9 Sep). */}
+              {(() => {
+                const c = completedRefund.order.customer;
+                const name = c
+                  ? [c.firstName, c.lastName].filter(Boolean).join(' ')
+                  : completedRefund.order.customerNameSnapshot || 'Walk-in';
+                const addr = c
+                  ? [c.billingStreet, c.billingCity, c.billingState, c.billingPostcode]
+                      .filter(Boolean)
+                      .join(', ')
+                  : '';
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span>Customer:</span>
+                      <span className="font-medium">{name}</span>
+                    </div>
+                    {c?.companyName && (
+                      <div className="flex justify-between">
+                        <span>Company:</span>
+                        <span>{c.companyName}</span>
+                      </div>
+                    )}
+                    {(c?.phone || c?.mobile) && (
+                      <div className="flex justify-between">
+                        <span>Phone:</span>
+                        <span>{c.phone || c.mobile}</span>
+                      </div>
+                    )}
+                    {c?.email && (
+                      <div className="flex justify-between">
+                        <span>Email:</span>
+                        <span>{c.email}</span>
+                      </div>
+                    )}
+                    {addr && (
+                      <div className="flex justify-between gap-4">
+                        <span>Address:</span>
+                        <span className="text-right">{addr}</span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               <div className="flex justify-between">
                 <span>Refund Date:</span>
                 <span>{formatDate(completedRefund.refund.createdAt)}</span>

@@ -62,6 +62,10 @@ interface InvoiceData {
   isMixed?: boolean;
   amountPaid?: number;
   balanceDue?: number;
+  // Individual money-in events (deposit + balance instalments). When
+  // there's more than one, each prints as its own line with method and
+  // date instead of the single DEPOSIT/PAID row.
+  payments?: { method: string; amount: number; date?: string }[];
   takeNowSubtotal?: number;
   deferredSubtotal?: number;
   salesPerson?: string;
@@ -396,13 +400,40 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
                     prints as DEPOSIT (partial) or PAID (in full) with
                     the method; an unpaid bank transfer gets its own
                     line so the remaining balance is explained. */}
-                {typeof invoice.amountPaid === 'number' && invoice.amountPaid > 0 && (
-                  <tr>
-                    <td style={totLabel}>
-                      {showDeposit ? 'DEPOSIT' : 'PAID'} ({methodLabel(invoice.paymentMethod)}):
-                    </td>
-                    <td style={totVal()}>{money(invoice.amountPaid)}</td>
-                  </tr>
+                {invoice.payments && invoice.payments.length > 1 ? (
+                  // Multiple money-in events (deposit + balance payment,
+                  // Sally 9 Sep): each prints as its own dated line so
+                  // the second payment is visible on a reprint.
+                  invoice.payments.map((p, i) => (
+                    <tr key={i}>
+                      <td style={totLabel}>
+                        {i === 0 && (showDeposit || invoice.isLayby || invoice.isBackorder)
+                          ? 'DEPOSIT'
+                          : 'PAYMENT'}{' '}
+                        (
+                        {methodLabel(p.method)}
+                        {p.date
+                          ? ` · ${new Date(p.date).toLocaleDateString('en-AU', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                            })}`
+                          : ''}
+                        ):
+                      </td>
+                      <td style={totVal()}>{money(p.amount)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  typeof invoice.amountPaid === 'number' &&
+                  invoice.amountPaid > 0 && (
+                    <tr>
+                      <td style={totLabel}>
+                        {showDeposit ? 'DEPOSIT' : 'PAID'} ({methodLabel(invoice.paymentMethod)}):
+                      </td>
+                      <td style={totVal()}>{money(invoice.amountPaid)}</td>
+                    </tr>
+                  )
                 )}
                 {invoice.paymentMethod === 'bank_transfer' && showDeposit && (
                   <tr>

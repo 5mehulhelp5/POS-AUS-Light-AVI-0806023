@@ -956,23 +956,15 @@ export default function POSPage() {
           // from sales staff by the API) — staff are still hard-blocked
           // server-side at order creation.
           const cost = costMap[productId];
-          const isMgr =
-            user?.role.name === 'admin' || user?.role.name === 'manager';
           if (cost != null && cost > 0 && unitPrice < cost * 1.3) {
-            if (!isMgr) {
-              toast.error(
-                'That price is below the minimum allowed margin — ask a manager',
-              );
-              return;
-            }
-            if (
-              !window.confirm(
-                `$${unitPrice.toFixed(2)} is below the minimum margin ` +
-                  `(cost + 30% = $${(cost * 1.3).toFixed(2)}). Set it anyway?`,
-              )
-            ) {
-              return;
-            }
+            // No override for anyone (Sally, 9 Sep: "take away the
+            // option to set anyway — see the message, hit Cancel and
+            // adjust the price"). Managers/admins included.
+            toast.error(
+              `$${unitPrice.toFixed(2)} is below the minimum margin ` +
+                `(cost + 30% = $${(cost * 1.3).toFixed(2)}) — adjust the price`,
+            );
+            return;
           }
           dispatch(setItemUnitPrice({ productId, unitPrice }));
         }}

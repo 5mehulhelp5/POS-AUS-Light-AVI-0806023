@@ -4,12 +4,14 @@ import { Repository, DataSource, Brackets, WhereExpressionBuilder } from 'typeor
 import {
   Order,
   OrderItem,
+  OrderEvent,
   OrderStatus,
   OrderType,
   PaymentStatus,
   OrderSyncStatus,
   OrderSource,
 } from './entities';
+import { User } from '../users/entities/user.entity';
 import { DeliveryType, DELIVERY_FEES } from './entities/order.entity';
 import { Payment, PaymentMethod, PaymentEntityStatus } from '../payments/entities/payment.entity';
 import { ProductsService } from '../products/products.service';
@@ -122,6 +124,8 @@ export class OrdersService {
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(OrderItem)
     private readonly orderItemRepository: Repository<OrderItem>,
+    @InjectRepository(OrderEvent)
+    private readonly orderEventRepository: Repository<OrderEvent>,
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
     private readonly productsService: ProductsService,
@@ -498,6 +502,9 @@ export class OrdersService {
       // the per-line backorder qty split. Customer must pay full price
       // for take-now items (they're walking out with them) plus 20% of
       // the deferred items (lay-by held + remaining-on-backorder).
+      // A line may carry BOTH flags (Sally, 9 Sep: "Back order 3 and
+      // Layby the 2") — the backorder split is applied first and the
+      // held split is clamped to whatever quantity remains.
       let takeNowSubtotal = 0;
       let deferredSubtotal = 0;
       for (const calc of validation.calculatedTotals.items) {
@@ -505,28 +512,20 @@ export class OrdersService {
         const isHeld = !!isLaybyHeldByProductId.get(calc.productId);
         const qty = Number(calc.quantity) || 0;
         const rowTotal = Number(calc.rowTotal) || 0;
-        if (isBack) {
-          const rawSplit = backorderQtyByProductId.get(calc.productId);
-          const backQty = Math.min(
-            qty,
-            Math.max(0, rawSplit != null ? Number(rawSplit) : qty),
-          );
-          const perUnit = qty > 0 ? rowTotal / qty : 0;
-          deferredSubtotal += perUnit * backQty;
-          takeNowSubtotal += perUnit * (qty - backQty);
-        } else if (isHeld) {
-          // Same partial-split treatment for lay-by held lines.
-          const rawSplit = laybyHeldQtyByProductId.get(calc.productId);
-          const heldQty = Math.min(
-            qty,
-            Math.max(0, rawSplit != null ? Number(rawSplit) : qty),
-          );
-          const perUnit = qty > 0 ? rowTotal / qty : 0;
-          deferredSubtotal += perUnit * heldQty;
-          takeNowSubtotal += perUnit * (qty - heldQty);
-        } else {
-          takeNowSubtotal += rowTotal;
-        }
+        const rawBack = backorderQtyByProductId.get(calc.productId);
+        const backQty = isBack
+          ? Math.min(qty, Math.max(0, rawBack != null ? Number(rawBack) : qty))
+          : 0;
+        const rawHeld = laybyHeldQtyByProductId.get(calc.productId);
+        const heldQty = isHeld
+          ? Math.min(
+              qty - backQty,
+              Math.max(0, rawHeld != null ? Number(rawHeld) : qty),
+            )
+          : 0;
+        const perUnit = qty > 0 ? rowTotal / qty : 0;
+        deferredSubtotal += perUnit * (backQty + heldQty);
+        takeNowSubtotal += perUnit * (qty - backQty - heldQty);
       }
       takeNowSubtotal = Math.round(takeNowSubtotal * 100) / 100;
       deferredSubtotal = Math.round(deferredSubtotal * 100) / 100;
@@ -781,19 +780,15 @@ export class OrdersService {
           return orderItem;
         };
 
-        // Three split cases:
-        //   1. Backorder split (some take-now, some on backorder)
-        //   2. Lay-by held split (some take-now, some held on shelf)
-        //   3. Whole-line single row (no split, or fully one or fully other)
-        if (lineIsBackorder && backQty < totalQty && backQty > 0) {
-          await createRow(totalQty - backQty, false, false);
-          await createRow(backQty, true, false);
-        } else if (lineIsLaybyHeld && heldQty < totalQty && heldQty > 0) {
-          await createRow(totalQty - heldQty, false, false);
-          await createRow(heldQty, false, true);
-        } else {
-          await createRow(totalQty, lineIsBackorder, lineIsLaybyHeld);
-        }
+        // Generic three-way split: a line can be part take-now, part
+        // backorder AND part lay-by held (Sally, 9 Sep: "Back order 3
+        // and Layby the 2"). The backorder split is applied first; the
+        // held split is clamped to what's left. createRow no-ops on
+        // qty <= 0, so pure/no-flag lines still produce a single row.
+        const heldQtyClamped = Math.min(heldQty, totalQty - backQty);
+        await createRow(totalQty - backQty - heldQtyClamped, false, false);
+        await createRow(backQty, true, false);
+        await createRow(heldQtyClamped, false, true);
       }
 
       // Log cart discount if applied — deferred until after commit for
@@ -1312,7 +1307,81 @@ export class OrdersService {
         `[orders.updateItems] order=${order.orderNumber} userId=${userId} lines=${persistedItems.length} grandTotal=${grandTotal} paid=${paid}`,
       );
 
+      // History event (Sally, 9 Sep: "product add ons history as well").
+      // Refunds/payments/exchanges have their own tables; item edits had
+      // no record at all — diff old vs new per SKU and write one
+      // human-readable order_events row. Description is final display
+      // text (includes who), so the timeline renders it without joins.
+      try {
+        const agg = (
+          rows: Array<{ sku?: string; name?: string; quantity?: number; unitPrice?: number }>,
+        ) => {
+          const m = new Map<string, { name: string; qty: number; price: number }>();
+          for (const r of rows) {
+            const key = r.sku || r.name || '?';
+            const cur = m.get(key);
+            if (cur) cur.qty += Number(r.quantity) || 0;
+            else
+              m.set(key, {
+                name: r.name || key,
+                qty: Number(r.quantity) || 0,
+                price: Number(r.unitPrice) || 0,
+              });
+          }
+          return m;
+        };
+        const before = agg(order.items || []);
+        const after = agg(persistedItems);
+        const changes: string[] = [];
+        for (const [sku, a] of after) {
+          const b = before.get(sku);
+          if (!b) changes.push(`Added ${a.qty}× ${a.name}`);
+          else {
+            if (a.qty !== b.qty)
+              changes.push(`${a.name}: qty ${b.qty} → ${a.qty}`);
+            if (Math.abs(a.price - b.price) > 0.005)
+              changes.push(
+                `${a.name}: price $${b.price.toFixed(2)} → $${a.price.toFixed(2)}`,
+              );
+          }
+        }
+        for (const [sku, b] of before) {
+          if (!after.has(sku)) changes.push(`Removed ${b.qty}× ${b.name}`);
+        }
+        if (changes.length > 0) {
+          const editor = await manager.findOne(User, { where: { id: userId } });
+          const who = editor
+            ? [editor.firstName, editor.lastName].filter(Boolean).join(' ')
+            : `user #${userId}`;
+          await manager.save(
+            manager.create(OrderEvent, {
+              orderId: order.id,
+              userId,
+              type: 'items_changed',
+              description: `Items changed by ${who}: ${changes.join('; ')}. New total $${grandTotal.toFixed(2)}.`,
+            }),
+          );
+        }
+      } catch (evErr) {
+        // The audit trail must never fail the edit itself.
+        // eslint-disable-next-line no-console
+        console.error(
+          `[orders.updateItems] event write failed for order ${order.id}:`,
+          evErr,
+        );
+      }
+
       return (await this.findById(orderId)) as Order;
+    });
+  }
+
+  // Timeline events for an order (currently item add/remove/qty/price
+  // edits). Refunds, payments and exchanges are derived from their own
+  // tables by the frontend timeline.
+  async getEvents(orderId: number): Promise<OrderEvent[]> {
+    return this.orderEventRepository.find({
+      where: { orderId },
+      order: { id: 'DESC' },
     });
   }
 
@@ -1435,13 +1504,19 @@ export class OrdersService {
     });
     if (!order) throw new BadRequestException('Order not found');
     const isLaybyOrder = order.orderType === OrderType.LAYBY;
-    const isBackorderPending = order.status === OrderStatus.BACKORDER_PENDING;
-    if (
-      !isLaybyOrder &&
-      !isBackorderPending &&
-      order.status !== OrderStatus.LAYBY_ACTIVE &&
-      order.status !== OrderStatus.LAYBY_EXPIRED
-    ) {
+    // Any still-open order that took a deposit can collect its balance
+    // here (Sally, 9 Sep: PAY button on deposit-paid backorders) —
+    // laybys, backorder-pending, and plain pending/processing orders
+    // that were part-paid. Closed orders (complete/refunded/cancelled)
+    // still refuse.
+    const payableStatuses = new Set<OrderStatus>([
+      OrderStatus.LAYBY_ACTIVE,
+      OrderStatus.LAYBY_EXPIRED,
+      OrderStatus.BACKORDER_PENDING,
+      OrderStatus.PENDING,
+      OrderStatus.PROCESSING,
+    ]);
+    if (!isLaybyOrder && !payableStatuses.has(order.status)) {
       throw new BadRequestException(
         `Cannot take balance payment on an order with status "${order.status}"`,
       );

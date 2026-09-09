@@ -123,10 +123,13 @@ export class OrdersController {
     }
 
     const exchange = await this.ordersService.getExchangeLinks(order);
+    // Timeline events (item edits etc.) ride along so the Order History
+    // section can show every action without extra round-trips.
+    const events = await this.ordersService.getEvents(id);
 
     return {
       success: true,
-      data: { order: { ...order, ...exchange } },
+      data: { order: { ...order, ...exchange, events } },
     };
   }
 

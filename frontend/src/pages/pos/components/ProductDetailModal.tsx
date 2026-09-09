@@ -6,6 +6,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ArrowLeftIcon,
+  PrinterIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import { productsApi, competitorApi } from '../../../services/api';
@@ -64,6 +65,9 @@ export default function ProductDetailModal({
   const [tab, setTab] = useState<Tab>('specs');
   const [qty, setQty] = useState(1);
   const [galleryIdx, setGalleryIdx] = useState(0);
+  // Shelf/price ticket print view (Avi, 9 Sep: "Print Ticket" button on
+  // each product page — name, SKU and price).
+  const [showTicket, setShowTicket] = useState(false);
 
   const [competitor, setCompetitor] = useState<any>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
@@ -476,6 +480,14 @@ export default function ProductDetailModal({
             </span>
           </div>
           <div className="flex gap-2">
+            <button
+              className="btn-secondary flex items-center gap-2"
+              onClick={() => setShowTicket(true)}
+              title="Print a shelf ticket — product name, SKU and price"
+            >
+              <PrinterIcon className="h-5 w-5" />
+              Print Ticket
+            </button>
             <button className="btn-secondary" onClick={onClose}>
               Close
             </button>
@@ -491,6 +503,58 @@ export default function ProductDetailModal({
           </div>
         </div>
       </div>
+
+      {/* Shelf ticket print view — name, SKU, price (Avi, 9 Sep).
+          printable-root isolates it during print so only the ticket
+          comes out; .paper keeps it black-on-white in both themes. */}
+      {showTicket && (
+        <div className="modal-backdrop-top print:bg-white print:static">
+          <div className="paper printable-root bg-white text-black rounded-lg shadow-2xl w-full max-w-md p-8">
+            <div className="text-center border-4 border-black p-6">
+              <p className="text-xs uppercase tracking-widest text-gray-600 mb-3">
+                Australian Lighting &amp; Fans
+              </p>
+              <p className="text-2xl font-bold leading-snug mb-3">
+                {product.name}
+              </p>
+              <p className="font-mono text-sm text-gray-700 mb-4">
+                SKU: {product.sku}
+              </p>
+              {onSale ? (
+                <>
+                  <p className="text-sm text-gray-600 line-through">
+                    ${Number(product.price).toFixed(2)}
+                  </p>
+                  <p className="text-5xl font-extrabold">
+                    ${Number(product.specialPrice).toFixed(2)}
+                  </p>
+                  <p className="text-sm font-bold uppercase mt-1">Sale</p>
+                </>
+              ) : (
+                <p className="text-5xl font-extrabold">
+                  ${Number(product.price).toFixed(2)}
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6 print:hidden">
+              <button
+                className="btn-secondary flex-1"
+                onClick={() => setShowTicket(false)}
+              >
+                Close
+              </button>
+              <button
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+                onClick={() => window.print()}
+              >
+                <PrinterIcon className="h-5 w-5" />
+                Print
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

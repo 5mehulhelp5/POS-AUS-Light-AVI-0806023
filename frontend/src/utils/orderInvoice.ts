@@ -101,6 +101,14 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     // Always present (Sally, 7 Sep: a paid-in-full reprint must show
     // PAID + BALANCE $0.00, not re-bill the total). balanceDue is
     // pre-credit — InvoiceModal subtracts creditApplied.
+    // Every money-in event so the invoice can print the deposit AND the
+    // later balance payment(s) as separate lines (Sally, 9 Sep: "invoice
+    // template to reflect the second payment").
+    payments: (o.payments || []).map((p: any) => ({
+      method: p.method,
+      amount: Number(p.amount || 0),
+      date: p.createdAt,
+    })),
     amountPaid: Math.round(paidNonCredit * 100) / 100,
     balanceDue: Math.max(
       0,
