@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Body,
   Param,
   ParseIntPipe,
   UseGuards,
@@ -11,6 +13,7 @@ import { SyncService } from './sync.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles, RoleNames } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @ApiTags('sync')
 @Controller('sync')
@@ -39,6 +42,36 @@ export class SyncController {
     return {
       success: true,
       data: this.syncService.getSyncProgress(),
+    };
+  }
+
+  // Automatic product sync schedule (Sally, 10 Sep 2026). Managers can
+  // see it; only admins can change it.
+  @Get('auto')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER)
+  @ApiOperation({ summary: 'Automatic product sync schedule + last/next run' })
+  async getAutoSync() {
+    return { success: true, data: await this.syncService.getAutoSyncState() };
+  }
+
+  @Put('auto')
+  @Roles(RoleNames.ADMIN)
+  @ApiOperation({ summary: 'Update the automatic product sync schedule' })
+  async updateAutoSync(
+    @Body() dto: { mode?: string; intervalMinutes?: number; dailyTime?: string },
+    @CurrentUser() user: any,
+  ) {
+    const config = await this.syncService.setAutoSyncConfig(dto, user?.id);
+    const state = await this.syncService.getAutoSyncState();
+    return {
+      success: true,
+      message:
+        config.mode === 'off'
+          ? 'Automatic product sync turned off'
+          : config.mode === 'interval'
+            ? `Products will sync automatically every ${config.intervalMinutes} minutes`
+            : `Products will sync automatically every day at ${config.dailyTime}`,
+      data: state,
     };
   }
 

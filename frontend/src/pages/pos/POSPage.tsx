@@ -13,6 +13,7 @@ import {
   fetchSubcategories,
   isProductOnSale,
   effectiveProductPrice,
+  setProductCost,
 } from '../../store/slices/productsSlice';
 import { productsApi, quotesApi } from '../../services/api';
 import {
@@ -1035,6 +1036,7 @@ export default function POSPage() {
           productId={detailProduct.id}
           fallbackProduct={detailProduct}
           tradePctMap={tradePctMap}
+          onCostUpdated={(id, cost) => dispatch(setProductCost({ id, cost }))}
           onClose={() => setDetailProduct(null)}
           onAddToCart={(p, q) => handleAddToCart(p, q)}
         />

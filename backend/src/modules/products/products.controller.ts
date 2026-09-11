@@ -2,12 +2,14 @@ import {
   Controller,
   Get,
   Put,
+  Patch,
   Body,
   Param,
   Query,
   UseGuards,
   ParseIntPipe,
   NotFoundException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -235,6 +237,40 @@ export class ProductsController {
       success: true,
       message: 'Trade pricing rules updated successfully',
       data: { rules },
+    };
+  }
+
+  // On-the-spot cost correction (Sally, 10 Sep 2026: "a cost price edit
+  // field on the product for admins/managers"). Same audience that can
+  // see cost. Send null to clear it.
+  @Patch(':id/cost')
+  @UseGuards(RolesGuard)
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER)
+  @ApiOperation({ summary: 'Update the supplier cost (inc GST) of a product' })
+  async updateCost(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { cost?: number | string | null },
+    @CurrentUser() user: any,
+  ) {
+    let cost: number | null;
+    if (dto?.cost === null || dto?.cost === undefined || dto?.cost === '') {
+      cost = null;
+    } else {
+      const n = Number(dto.cost);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new BadRequestException('Cost must be a number of 0 or more');
+      }
+      cost = Math.round(n * 100) / 100;
+    }
+    const before = await this.productsService.findById(id);
+    const product = await this.productsService.updateCost(id, cost);
+    this.logger.log(
+      `Cost changed on ${product.sku} (#${id}): ${before?.cost ?? 'null'} -> ${cost ?? 'null'} by user #${user?.id ?? '?'}`,
+    );
+    return {
+      success: true,
+      message: cost == null ? 'Cost cleared' : `Cost set to $${cost.toFixed(2)}`,
+      data: { id: product.id, sku: product.sku, cost },
     };
   }
 

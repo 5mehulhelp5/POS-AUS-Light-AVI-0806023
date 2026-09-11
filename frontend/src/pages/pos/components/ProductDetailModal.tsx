@@ -7,6 +7,7 @@ import {
   ChevronRightIcon,
   ArrowLeftIcon,
   PrinterIcon,
+  PencilSquareIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import { productsApi, competitorApi } from '../../../services/api';
@@ -33,6 +34,9 @@ interface ProductDetailModalProps {
   // Trade auto-discount % keyed by productId, shared from POSPage so the
   // detail modal can render the same yellow "Trade $X" tag as the grid card.
   tradePctMap?: Record<number, number>;
+  // Fired after a manager/admin saves a new supplier cost, so the grid's
+  // copy (and the cart margin guard) pick up the change.
+  onCostUpdated?: (productId: number, cost: number | null) => void;
   onClose: () => void;
   onAddToCart: (
     product: {
@@ -57,6 +61,7 @@ export default function ProductDetailModal({
   productId,
   fallbackProduct,
   tradePctMap,
+  onCostUpdated,
   onClose,
   onAddToCart,
 }: ProductDetailModalProps) {
@@ -68,6 +73,12 @@ export default function ProductDetailModal({
   // Shelf/price ticket print view (Avi, 9 Sep: "Print Ticket" button on
   // each product page — name, SKU and price).
   const [showTicket, setShowTicket] = useState(false);
+  // Inline cost editor (Sally, 10 Sep: "a cost price edit field on the
+  // product for admins/managers"). Only rendered when the API returned a
+  // cost, which it does solely for manager/admin.
+  const [editingCost, setEditingCost] = useState(false);
+  const [costInput, setCostInput] = useState('');
+  const [costSaving, setCostSaving] = useState(false);
 
   const [competitor, setCompetitor] = useState<any>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
@@ -111,6 +122,39 @@ export default function ProductDetailModal({
   }, [tab, competitor, competitorLoading, fallbackProduct.name, fallbackProduct.sku]);
 
   const product = detail?.product || fallbackProduct;
+
+  const startEditCost = () => {
+    setCostInput(product.cost != null ? Number(product.cost).toFixed(2) : '');
+    setEditingCost(true);
+  };
+
+  const saveCost = async () => {
+    const raw = costInput.trim();
+    let cost: number | null = null;
+    if (raw !== '') {
+      const n = parseFloat(raw);
+      if (!Number.isFinite(n) || n < 0) {
+        toast.error('Cost must be a number of 0 or more');
+        return;
+      }
+      cost = Math.round(n * 100) / 100;
+    }
+    setCostSaving(true);
+    try {
+      const r = await productsApi.updateCost(product.id, cost);
+      const saved = r.data?.data?.cost ?? cost;
+      setDetail((d: any) =>
+        d?.product ? { ...d, product: { ...d.product, cost: saved } } : d,
+      );
+      onCostUpdated?.(product.id, saved);
+      toast.success(r.data?.message || 'Cost updated');
+      setEditingCost(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to update cost');
+    } finally {
+      setCostSaving(false);
+    }
+  };
   const gallery: string[] =
     detail?.gallery && detail.gallery.length > 0
       ? detail.gallery
@@ -226,12 +270,51 @@ export default function ProductDetailModal({
               })()}
               {/* Cost — only present when the API returned it (manager/admin
                   only; the backend strips it for sales_staff). */}
-              {product.cost != null && (
-                <span
-                  className="text-xs font-bold px-2 py-0.5 rounded bg-gray-600/30 text-gray-300 border border-gray-500/40"
-                  title="Supplier cost (inc GST)"
+              {product.cost != null && !editingCost && (
+                <button
+                  type="button"
+                  className="text-xs font-bold px-2 py-0.5 rounded bg-gray-600/30 text-gray-300 border border-gray-500/40 inline-flex items-center gap-1 hover:border-primary-400 hover:text-primary-300"
+                  title="Supplier cost (inc GST) — click to change"
+                  onClick={startEditCost}
                 >
                   Cost ${Number(product.cost).toFixed(2)}
+                  <PencilSquareIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {editingCost && (
+                <span className="inline-flex items-center gap-1">
+                  <span className="text-xs text-gray-400">Cost $</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    autoFocus
+                    className="input w-28 py-0.5 text-sm"
+                    value={costInput}
+                    placeholder="inc GST"
+                    disabled={costSaving}
+                    onChange={(e) => setCostInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') saveCost();
+                      if (e.key === 'Escape') setEditingCost(false);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary py-0.5 px-2 text-xs"
+                    disabled={costSaving}
+                    onClick={saveCost}
+                  >
+                    {costSaving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary py-0.5 px-2 text-xs"
+                    disabled={costSaving}
+                    onClick={() => setEditingCost(false)}
+                  >
+                    Cancel
+                  </button>
                 </span>
               )}
               <span
@@ -505,39 +588,81 @@ export default function ProductDetailModal({
       </div>
 
       {/* Shelf ticket print view — name, SKU, price (Avi, 9 Sep).
+          Sized to Sally's label stock (10 Sep): 36mm high x 89mm wide.
+          The ticket is drawn at true physical size on screen and the
+          injected @page rule makes the print page exactly that size
+          with no margin, so it prints 1:1 on the label printer.
           printable-root isolates it during print so only the ticket
           comes out; .paper keeps it black-on-white in both themes. */}
       {showTicket && (
         <div className="modal-backdrop-top print:bg-white print:static">
-          <div className="paper printable-root bg-white text-black rounded-lg shadow-2xl w-full max-w-md p-8">
-            <div className="text-center border-4 border-black p-6">
-              <p className="text-xs uppercase tracking-widest text-gray-600 mb-3">
-                Australian Lighting &amp; Fans
-              </p>
-              <p className="text-2xl font-bold leading-snug mb-3">
-                {product.name}
-              </p>
-              <p className="font-mono text-sm text-gray-700 mb-4">
-                SKU: {product.sku}
-              </p>
-              {onSale ? (
-                <>
-                  <p className="text-sm text-gray-600 line-through">
+          <style>{`@page { size: 89mm 36mm; margin: 0; }`}</style>
+          <div className="m-auto flex flex-col items-center gap-4 print:m-0 print:block">
+            <div
+              className="paper printable-root bg-white text-black overflow-hidden flex items-stretch"
+              style={{
+                width: '89mm',
+                height: '36mm',
+                padding: '2mm 3mm',
+                fontFamily: 'Arial, Helvetica, sans-serif',
+              }}
+            >
+              {/* Left: store, name, SKU */}
+              <div className="flex-1 min-w-0 flex flex-col justify-between">
+                <p
+                  className="uppercase text-gray-600 truncate"
+                  style={{ fontSize: '6pt', letterSpacing: '0.12em' }}
+                >
+                  Australian Lighting &amp; Fans
+                </p>
+                <p
+                  className="font-bold"
+                  style={{
+                    fontSize: '9.5pt',
+                    lineHeight: 1.15,
+                    display: '-webkit-box',
+                    WebkitLineClamp: 3,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {product.name}
+                </p>
+                <p className="font-mono text-gray-700 truncate" style={{ fontSize: '7pt' }}>
+                  SKU {product.sku}
+                </p>
+              </div>
+
+              {/* Right: price */}
+              <div
+                className="flex flex-col items-end justify-center text-right shrink-0"
+                style={{ paddingLeft: '2mm', minWidth: '28mm' }}
+              >
+                {onSale ? (
+                  <>
+                    <p className="text-gray-600 line-through" style={{ fontSize: '7pt' }}>
+                      ${Number(product.price).toFixed(2)}
+                    </p>
+                    <p className="font-extrabold" style={{ fontSize: '20pt', lineHeight: 1 }}>
+                      ${Number(product.specialPrice).toFixed(2)}
+                    </p>
+                    <p className="font-bold uppercase" style={{ fontSize: '7pt', letterSpacing: '0.1em' }}>
+                      Sale
+                    </p>
+                  </>
+                ) : (
+                  <p className="font-extrabold" style={{ fontSize: '20pt', lineHeight: 1 }}>
                     ${Number(product.price).toFixed(2)}
                   </p>
-                  <p className="text-5xl font-extrabold">
-                    ${Number(product.specialPrice).toFixed(2)}
-                  </p>
-                  <p className="text-sm font-bold uppercase mt-1">Sale</p>
-                </>
-              ) : (
-                <p className="text-5xl font-extrabold">
-                  ${Number(product.price).toFixed(2)}
-                </p>
-              )}
+                )}
+              </div>
             </div>
 
-            <div className="flex gap-3 mt-6 print:hidden">
+            <p className="text-xs text-gray-400 print:hidden">
+              Actual size: 89mm wide × 36mm high
+            </p>
+
+            <div className="flex gap-3 w-64 print:hidden">
               <button
                 className="btn-secondary flex-1"
                 onClick={() => setShowTicket(false)}

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { MagentoService, MagentoProduct, MagentoCustomer, MagentoOrder } from './magento.service';
@@ -8,6 +9,63 @@ import { Customer, SyncStatus } from '../customers/entities/customer.entity';
 import { Order, OrderStatus, PaymentStatus, OrderSyncStatus, OrderSource } from '../orders/entities/order.entity';
 import { OrderItem } from '../orders/entities/order-item.entity';
 import { SyncLog, SyncType, SyncDirection, SyncLogStatus } from './entities/sync-log.entity';
+import { SettingsService } from '../settings/settings.service';
+import { SettingType } from '../settings/entities/setting.entity';
+
+// Automatic product sync (Sally, 10 Sep 2026: "an automatic product sync
+// every 15 minutes (or a set time) so nobody has to press the button").
+// Stored as JSON in the `auto_product_sync` setting; edited under
+// Settings -> Magento Sync -> Automatic Product Sync.
+export type AutoSyncMode = 'off' | 'interval' | 'daily';
+export interface AutoSyncConfig {
+  mode: AutoSyncMode;
+  // 'interval' mode: minutes between runs (measured from the end of the
+  // previous product sync, manual or automatic).
+  intervalMinutes: number;
+  // 'daily' mode: local store time "HH:MM" (Australia/Melbourne).
+  dailyTime: string;
+}
+export const AUTO_SYNC_SETTING_KEY = 'auto_product_sync';
+export const DEFAULT_AUTO_SYNC: AutoSyncConfig = {
+  mode: 'off',
+  intervalMinutes: 15,
+  dailyTime: '06:00',
+};
+const STORE_TZ = 'Australia/Melbourne';
+
+export function normaliseAutoSyncConfig(raw: unknown): AutoSyncConfig {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const mode: AutoSyncMode =
+    r.mode === 'interval' || r.mode === 'daily' ? r.mode : 'off';
+  const iv = Number(r.intervalMinutes);
+  // Floor of 5 min — a full 15k-SKU walk takes several minutes and
+  // must not be allowed to queue up behind itself.
+  const intervalMinutes =
+    Number.isFinite(iv) && iv >= 5 ? Math.floor(iv) : DEFAULT_AUTO_SYNC.intervalMinutes;
+  const dt = typeof r.dailyTime === 'string' ? r.dailyTime.trim() : '';
+  const dailyTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(dt) ? dt : DEFAULT_AUTO_SYNC.dailyTime;
+  return { mode, intervalMinutes, dailyTime };
+}
+
+// "HH:MM" and "YYYY-MM-DD" in the store's local time.
+function storeLocalParts(d: Date): { time: string; date: string } {
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    timeZone: STORE_TZ,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+  // Some ICU builds render midnight as "24" with hour12:false — normalise.
+  const hour = get('hour') === '24' ? '00' : get('hour');
+  return {
+    time: `${hour}:${get('minute')}`,
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+  };
+}
 
 export interface SyncResult {
   success: boolean;
@@ -70,7 +128,125 @@ export class SyncService {
     private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(SyncLog)
     private readonly syncLogRepository: Repository<SyncLog>,
+    private readonly settingsService: SettingsService,
   ) {}
+
+  // ---- automatic product sync ----
+  // In-memory bookkeeping. After a restart the interval clock starts
+  // from boot (not "immediately"), so a deploy never kicks off a 15k-SKU
+  // sync the moment the server comes up.
+  private readonly bootAt = new Date();
+  private lastProductSyncAt: Date | null = null;
+  private autoSyncLastRunAt: Date | null = null;
+  private autoSyncLastResult: { success: boolean; message: string } | null = null;
+  private autoSyncLastDailyDate: string | null = null;
+
+  async getAutoSyncConfig(): Promise<AutoSyncConfig> {
+    const raw = await this.settingsService.getValue<unknown>(AUTO_SYNC_SETTING_KEY, null);
+    return normaliseAutoSyncConfig(raw);
+  }
+
+  async setAutoSyncConfig(raw: unknown, userId?: number): Promise<AutoSyncConfig> {
+    const cfg = normaliseAutoSyncConfig(raw);
+    await this.settingsService.set(
+      AUTO_SYNC_SETTING_KEY,
+      cfg,
+      SettingType.JSON,
+      'Automatic Magento product sync schedule',
+      userId,
+    );
+    // Re-arm the daily guard so changing the time today still fires
+    // today if the new time is still ahead.
+    this.autoSyncLastDailyDate = null;
+    this.logger.log(`Auto product sync config updated: ${JSON.stringify(cfg)}`);
+    return cfg;
+  }
+
+  // Shown on the Settings page next to the schedule controls.
+  async getAutoSyncState() {
+    const config = await this.getAutoSyncConfig();
+    let nextRunLabel: string | null = null;
+    if (config.mode === 'interval') {
+      const ref = this.lastProductSyncAt ?? this.bootAt;
+      nextRunLabel = new Date(ref.getTime() + config.intervalMinutes * 60_000).toISOString();
+    } else if (config.mode === 'daily') {
+      const { time, date } = storeLocalParts(new Date());
+      const ranToday = this.autoSyncLastDailyDate === date;
+      nextRunLabel =
+        !ranToday && time < config.dailyTime
+          ? `today ${config.dailyTime}`
+          : `tomorrow ${config.dailyTime}`;
+    }
+    return {
+      config,
+      busy: this.isProductSyncBusy(),
+      lastProductSyncAt: this.lastProductSyncAt?.toISOString() ?? null,
+      lastAutoRunAt: this.autoSyncLastRunAt?.toISOString() ?? null,
+      lastAutoResult: this.autoSyncLastResult,
+      nextRunLabel,
+      timezone: STORE_TZ,
+    };
+  }
+
+  private isProductSyncBusy(): boolean {
+    return !!this.syncProgress && this.syncProgress.finishedAt === null;
+  }
+
+  // Once a minute: decide whether the schedule says a product sync is
+  // due, and run one if nothing else is syncing. Cheap when off — a
+  // single settings read.
+  @Cron(CronExpression.EVERY_MINUTE)
+  async autoSyncTick(): Promise<void> {
+    let cfg: AutoSyncConfig;
+    try {
+      cfg = await this.getAutoSyncConfig();
+    } catch (err) {
+      this.logger.warn(`Auto sync: could not read config (${err})`);
+      return;
+    }
+    if (cfg.mode === 'off') return;
+
+    const now = new Date();
+    let due = false;
+    let reason = '';
+
+    if (cfg.mode === 'interval') {
+      const ref = this.lastProductSyncAt ?? this.bootAt;
+      const elapsedMin = (now.getTime() - ref.getTime()) / 60_000;
+      due = elapsedMin >= cfg.intervalMinutes;
+      reason = `every ${cfg.intervalMinutes} min`;
+    } else {
+      const { time, date } = storeLocalParts(now);
+      if (this.autoSyncLastDailyDate === null && time >= cfg.dailyTime) {
+        // First tick after boot/config change and the slot has already
+        // passed today — treat today as done rather than firing late.
+        this.autoSyncLastDailyDate = date;
+      }
+      due = time >= cfg.dailyTime && this.autoSyncLastDailyDate !== date;
+      reason = `daily at ${cfg.dailyTime} ${STORE_TZ}`;
+      if (due) this.autoSyncLastDailyDate = date;
+    }
+
+    if (!due) return;
+    if (this.isProductSyncBusy()) {
+      this.logger.log('Auto sync: due but another sync is running — will retry next minute');
+      return;
+    }
+
+    this.logger.log(`Auto product sync starting (${reason})`);
+    this.autoSyncLastRunAt = now;
+    try {
+      const result = await this.syncProducts();
+      this.autoSyncLastResult = { success: result.success, message: result.message };
+      if (!result.success) {
+        this.logger.warn(`Auto product sync finished with errors: ${result.message}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.autoSyncLastResult = { success: false, message };
+      this.logger.error(`Auto product sync threw: ${message}`);
+    }
+  }
 
   // id -> label map for the brand attribute. Refreshed at the start of
   // every product sync so a supplier renamed in Magento shows the new
@@ -368,6 +544,7 @@ export class SyncService {
         `Product sync completed: ${productsCreated} created, ${productsUpdated} updated` +
         (errors.length > 0 ? ` (${errors.length} errors)` : '');
       this.progressEnd(errors.length === 0, message);
+      this.lastProductSyncAt = new Date();
       return {
         success: errors.length === 0,
         message,
@@ -379,6 +556,9 @@ export class SyncService {
       this.logger.error('Product sync failed', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
       this.progressEnd(false, message);
+      // Count a failed attempt too, so a broken Magento doesn't get
+      // hammered every minute by the interval schedule.
+      this.lastProductSyncAt = new Date();
       return {
         success: false,
         message,

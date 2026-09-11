@@ -123,6 +123,18 @@ export class ProductsService {
     });
   }
 
+  // Supplier cost lives only in the POS (Magento never holds it), so an
+  // on-the-spot correction has to be made here. The Magento sync leaves
+  // `cost` untouched, so an edit survives the next product sync.
+  async updateCost(productId: number, cost: number | null): Promise<Product> {
+    const product = await this.productRepository.findOne({ where: { id: productId } });
+    if (!product) {
+      throw new NotFoundException(`Product ${productId} not found`);
+    }
+    product.cost = cost;
+    return this.productRepository.save(product);
+  }
+
   async updateStock(productId: number, quantity: number): Promise<void> {
     const product = await this.findById(productId);
     if (!product) {

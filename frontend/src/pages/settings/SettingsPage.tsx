@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { settingsApi, syncApi, productsApi } from '../../services/api';
+import type { AutoSyncConfig, AutoSyncState } from '../../services/api';
 import {
   BuildingStorefrontIcon,
   CreditCardIcon,
@@ -118,6 +119,15 @@ export default function SettingsPage() {
     customerCount: number;
   } | null>(null);
   const [syncRunning, setSyncRunning] = useState<string | null>(null);
+  // Automatic product sync schedule (Sally, 10 Sep). `autoSyncDraft` is
+  // what the controls show; `autoSync` is the saved state from the server.
+  const [autoSync, setAutoSync] = useState<AutoSyncState | null>(null);
+  const [autoSyncDraft, setAutoSyncDraft] = useState<AutoSyncConfig>({
+    mode: 'off',
+    intervalMinutes: 15,
+    dailyTime: '06:00',
+  });
+  const [autoSyncSaving, setAutoSyncSaving] = useState(false);
   const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
   // Live progress of the current/last background sync (categories /
   // products / customers). Polled every 3s while the sync tab is open.
@@ -178,6 +188,13 @@ export default function SettingsPage() {
         case 'sync':
           const statusRes = await syncApi.getStatus();
           setSyncStatus(statusRes.data.data);
+          try {
+            const autoRes = await syncApi.getAutoSync();
+            setAutoSync(autoRes.data.data);
+            setAutoSyncDraft(autoRes.data.data.config);
+          } catch {
+            // older backend without the schedule endpoint — card shows "unavailable"
+          }
           break;
       }
     } catch (error) {
@@ -263,6 +280,12 @@ export default function SettingsPage() {
         if (p?.finishedAt && prevFinished === null) {
           const s = await syncApi.getStatus();
           setSyncStatus(s.data.data);
+          try {
+            const a = await syncApi.getAutoSync();
+            setAutoSync(a.data.data);
+          } catch {
+            // ignore
+          }
         }
         prevFinished = p?.finishedAt ?? undefined;
       } catch {
@@ -273,6 +296,23 @@ export default function SettingsPage() {
     const iv = setInterval(tick, 3000);
     return () => clearInterval(iv);
   }, [activeTab]);
+
+  const handleSaveAutoSync = async () => {
+    setAutoSyncSaving(true);
+    try {
+      const r = await syncApi.updateAutoSync(autoSyncDraft);
+      setAutoSync(r.data.data);
+      setAutoSyncDraft(r.data.data.config);
+      setSyncResult({ success: true, message: r.data.message || 'Schedule saved' });
+    } catch (e: any) {
+      setSyncResult({
+        success: false,
+        message: e.response?.data?.message || 'Failed to save the schedule',
+      });
+    } finally {
+      setAutoSyncSaving(false);
+    }
+  };
 
   const handleSync = async (type: 'categories' | 'products' | 'customers' | 'orders' | 'push-orders' | 'stock' | 'full' | 'clear-and-sync') => {
     setSyncRunning(type);
@@ -1343,6 +1383,126 @@ export default function SettingsPage() {
                   {syncResult.message}
                 </div>
               )}
+
+              {/* Automatic product sync schedule (Sally, 10 Sep 2026) */}
+              <div className="card p-6">
+                <h2 className="text-lg font-semibold mb-1">Automatic Product Sync</h2>
+                <p className="text-sm text-gray-400 mb-4">
+                  Pulls prices, specials, stock and new products from Magento on a
+                  schedule so nobody has to press "Sync Products Only". Cost prices
+                  are never touched by a sync.
+                </p>
+                {autoSync === null ? (
+                  <div className="text-gray-400 text-sm">
+                    Schedule unavailable — backend needs updating.
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-col md:flex-row md:items-end gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Schedule</label>
+                        <select
+                          className="input w-full md:w-64"
+                          value={
+                            autoSyncDraft.mode === 'interval'
+                              ? `interval:${autoSyncDraft.intervalMinutes}`
+                              : autoSyncDraft.mode
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === 'off') {
+                              setAutoSyncDraft({ ...autoSyncDraft, mode: 'off' });
+                            } else if (v === 'daily') {
+                              setAutoSyncDraft({ ...autoSyncDraft, mode: 'daily' });
+                            } else {
+                              setAutoSyncDraft({
+                                ...autoSyncDraft,
+                                mode: 'interval',
+                                intervalMinutes: parseInt(v.split(':')[1], 10),
+                              });
+                            }
+                          }}
+                        >
+                          <option value="off">Off — manual only</option>
+                          <option value="interval:15">Every 15 minutes</option>
+                          <option value="interval:30">Every 30 minutes</option>
+                          <option value="interval:60">Every hour</option>
+                          <option value="interval:120">Every 2 hours</option>
+                          <option value="daily">Once a day at a set time</option>
+                        </select>
+                      </div>
+                      {autoSyncDraft.mode === 'daily' && (
+                        <div>
+                          <label className="block text-sm font-medium mb-1">
+                            Time (Melbourne)
+                          </label>
+                          <input
+                            type="time"
+                            className="input w-40"
+                            value={autoSyncDraft.dailyTime}
+                            onChange={(e) =>
+                              setAutoSyncDraft({ ...autoSyncDraft, dailyTime: e.target.value })
+                            }
+                          />
+                        </div>
+                      )}
+                      <button
+                        className="btn-primary"
+                        onClick={handleSaveAutoSync}
+                        disabled={autoSyncSaving}
+                      >
+                        {autoSyncSaving ? 'Saving…' : 'Save Schedule'}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 text-sm text-gray-400 space-y-1">
+                      {autoSync.config.mode === 'off' ? (
+                        <div>Automatic sync is off.</div>
+                      ) : (
+                        <div>
+                          Next automatic sync:{' '}
+                          <span className="text-gray-200">
+                            {autoSync.nextRunLabel
+                              ? /^\d{4}-/.test(autoSync.nextRunLabel)
+                                ? new Date(autoSync.nextRunLabel).toLocaleString()
+                                : autoSync.nextRunLabel
+                              : '—'}
+                          </span>
+                          {autoSync.busy && ' (a sync is running now)'}
+                        </div>
+                      )}
+                      <div>
+                        Last product sync (any):{' '}
+                        <span className="text-gray-200">
+                          {autoSync.lastProductSyncAt
+                            ? new Date(autoSync.lastProductSyncAt).toLocaleString()
+                            : 'none since the server last restarted'}
+                        </span>
+                      </div>
+                      {autoSync.lastAutoRunAt && (
+                        <div>
+                          Last automatic run:{' '}
+                          <span className="text-gray-200">
+                            {new Date(autoSync.lastAutoRunAt).toLocaleString()}
+                          </span>
+                          {autoSync.lastAutoResult && (
+                            <span
+                              className={
+                                autoSync.lastAutoResult.success
+                                  ? 'text-green-400'
+                                  : 'text-red-400'
+                              }
+                            >
+                              {' '}
+                              — {autoSync.lastAutoResult.message}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
 
               {/* Sync Actions */}
               <div className="card p-6">

@@ -10,10 +10,12 @@ import { OrderItem } from '../orders/entities/order-item.entity';
 import { MagentoService } from './magento.service';
 import { SyncService } from './sync.service';
 import { SyncController } from './sync.controller';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
   imports: [
     ConfigModule,
+    SettingsModule,
     TypeOrmModule.forFeature([SyncLog, SyncQueue, Product, Category, Customer, Order, OrderItem]),
   ],
   controllers: [SyncController],

@@ -235,6 +235,16 @@ const productsSlice = createSlice({
         state.selectedSubcategory = null;
       }
     },
+    // Keep the grid's copy in step after a cost edit in the detail modal,
+    // so the cart's cost+30% margin guard uses the new figure without a
+    // refetch.
+    setProductCost: (
+      state,
+      action: PayloadAction<{ id: number; cost: number | null }>,
+    ) => {
+      const p = state.items.find((x) => x.id === action.payload.id);
+      if (p) p.cost = action.payload.cost;
+    },
     clearSubcategories: (state) => {
       state.subcategories = [];
       state.selectedSubcategory = null;
@@ -284,6 +294,7 @@ export const {
   navigateToCategory,
   navigateToBreadcrumb,
   clearSubcategories,
+  setProductCost,
   clearError,
 } = productsSlice.actions;
 

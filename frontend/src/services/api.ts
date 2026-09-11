@@ -77,6 +77,10 @@ export const productsApi = {
   getTradeRules: () => api.get('/products/trade-rules'),
   updateTradeRules: (rules: any[]) =>
     api.put('/products/trade-rules', { rules }),
+
+  // On-the-spot supplier cost correction (manager/admin). null clears it.
+  updateCost: (id: number, cost: number | null) =>
+    api.patch(`/products/${id}/cost`, { cost }),
 };
 
 // Customers API
@@ -422,7 +426,27 @@ export const syncApi = {
   syncStock: () => api.post('/sync/stock'),
   fullSync: () => api.post('/sync/full'),
   clearAndSync: () => api.post('/sync/clear-and-sync'),
+  // Automatic product sync schedule (manager read, admin write).
+  getAutoSync: () => api.get('/sync/auto'),
+  updateAutoSync: (cfg: AutoSyncConfig) => api.put('/sync/auto', cfg),
 };
+
+export type AutoSyncMode = 'off' | 'interval' | 'daily';
+export interface AutoSyncConfig {
+  mode: AutoSyncMode;
+  intervalMinutes: number;
+  dailyTime: string;
+}
+export interface AutoSyncState {
+  config: AutoSyncConfig;
+  busy: boolean;
+  lastProductSyncAt: string | null;
+  lastAutoRunAt: string | null;
+  lastAutoResult: { success: boolean; message: string } | null;
+  // ISO timestamp for interval mode, "today HH:MM" / "tomorrow HH:MM" for daily.
+  nextRunLabel: string | null;
+  timezone: string;
+}
 
 // Competitor API
 export const competitorApi = {
