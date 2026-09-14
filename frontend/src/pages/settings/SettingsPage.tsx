@@ -114,6 +114,10 @@ export default function SettingsPage() {
   // Sync state
   const [syncStatus, setSyncStatus] = useState<{
     lastSync: string | null;
+    lastSyncStatus?: string | null;
+    lastSyncType?: string | null;
+    lastSyncFailed?: number;
+    lastSuccessfulSync?: string | null;
     productCount: number;
     categoryCount: number;
     customerCount: number;
@@ -140,7 +144,9 @@ export default function SettingsPage() {
     finishedAt: string | null;
     success: boolean | null;
     message: string | null;
+    errors?: string[];
   } | null>(null);
+  const [showSyncErrors, setShowSyncErrors] = useState(false);
 
   useEffect(() => {
     fetchSettings();
@@ -1300,7 +1306,27 @@ export default function SettingsPage() {
                           ? new Date(syncStatus.lastSync).toLocaleString()
                           : 'Never'}
                       </div>
-                      <div className="text-sm text-gray-400">Last Sync</div>
+                      <div className="text-sm text-gray-400">
+                        Last Sync
+                        {syncStatus.lastSyncType ? ` (${syncStatus.lastSyncType})` : ''}
+                      </div>
+                      {/* A run that finished with some record errors still
+                          counts as the last sync; say so, and show when the
+                          last clean one was. */}
+                      {syncStatus.lastSyncStatus === 'partial' && (
+                        <div className="text-xs text-amber-300 mt-1">
+                          {syncStatus.lastSyncFailed} record{syncStatus.lastSyncFailed === 1 ? '' : 's'} failed
+                          {syncStatus.lastSuccessfulSync &&
+                            ` · last clean run ${new Date(syncStatus.lastSuccessfulSync).toLocaleDateString()}`}
+                        </div>
+                      )}
+                      {syncStatus.lastSyncStatus === 'failed' && (
+                        <div className="text-xs text-red-400 mt-1">
+                          Run failed
+                          {syncStatus.lastSuccessfulSync &&
+                            ` · last clean run ${new Date(syncStatus.lastSuccessfulSync).toLocaleDateString()}`}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1356,16 +1382,33 @@ export default function SettingsPage() {
                       );
                     })()
                   ) : (
-                    <div
-                      className={`text-sm ${liveProgress.success ? 'text-green-400' : 'text-red-400'}`}
-                    >
-                      {liveProgress.success ? '✓' : '✗'} {liveProgress.message} —{' '}
-                      {new Date(liveProgress.finishedAt).toLocaleString('en-AU', {
-                        day: 'numeric',
-                        month: 'short',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
+                    <div>
+                      <div
+                        className={`text-sm ${liveProgress.success ? 'text-green-400' : 'text-red-400'}`}
+                      >
+                        {liveProgress.success ? '✓' : '✗'} {liveProgress.message} —{' '}
+                        {new Date(liveProgress.finishedAt).toLocaleString('en-AU', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                        {(liveProgress.errors?.length ?? 0) > 0 && (
+                          <button
+                            className="ml-3 text-xs underline text-gray-400 hover:text-gray-200"
+                            onClick={() => setShowSyncErrors((v) => !v)}
+                          >
+                            {showSyncErrors ? 'Hide errors' : `Show ${liveProgress.errors!.length} error${liveProgress.errors!.length === 1 ? '' : 's'}`}
+                          </button>
+                        )}
+                      </div>
+                      {showSyncErrors && (liveProgress.errors?.length ?? 0) > 0 && (
+                        <ul className="mt-2 max-h-64 overflow-y-auto text-xs font-mono text-red-300 space-y-1 bg-pos-dark rounded p-3">
+                          {liveProgress.errors!.map((e, i) => (
+                            <li key={i} className="break-all">{e}</li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   )}
                 </div>

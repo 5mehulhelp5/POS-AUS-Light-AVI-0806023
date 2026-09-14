@@ -345,6 +345,10 @@ export class SyncService {
     finishedAt: string | null;
     success: boolean | null;
     message: string | null;
+    // Per-record failures from the last run (SKU + reason), so the
+    // Settings page can show WHAT the "35 errors" were without anyone
+    // reading pm2 logs. Capped to keep the poll response small.
+    errors: string[];
   } | null = null;
 
   getSyncProgress() {
@@ -361,6 +365,7 @@ export class SyncService {
       finishedAt: null,
       success: null,
       message: null,
+      errors: [],
     };
   }
 
@@ -376,11 +381,12 @@ export class SyncService {
     if (this.syncProgress) this.syncProgress.current++;
   }
 
-  private progressEnd(success: boolean, message: string) {
+  private progressEnd(success: boolean, message: string, errors: string[] = []) {
     if (this.syncProgress) {
       this.syncProgress.finishedAt = new Date().toISOString();
       this.syncProgress.success = success;
       this.syncProgress.message = message;
+      this.syncProgress.errors = errors.slice(0, 100);
     }
   }
 
@@ -473,10 +479,14 @@ export class SyncService {
       }
 
       // Log the sync
-      await this.logSync('categories', categoriesCreated + categoriesUpdated, errors.length === 0);
+      await this.logSync('categories', categoriesCreated + categoriesUpdated, errors.length === 0, {
+        created: categoriesCreated,
+        updated: categoriesUpdated,
+        errors,
+      });
 
       const message = `Category sync completed: ${categoriesCreated} created, ${categoriesUpdated} updated`;
-      this.progressEnd(errors.length === 0, message);
+      this.progressEnd(errors.length === 0, message, errors);
       return {
         success: errors.length === 0,
         message,
@@ -538,12 +548,16 @@ export class SyncService {
       // so no separate stock sync pass is needed
 
       // Log the sync
-      await this.logSync('products', productsCreated + productsUpdated, errors.length === 0);
+      await this.logSync('products', productsCreated + productsUpdated, errors.length === 0, {
+        created: productsCreated,
+        updated: productsUpdated,
+        errors,
+      });
 
       const message =
         `Product sync completed: ${productsCreated} created, ${productsUpdated} updated` +
         (errors.length > 0 ? ` (${errors.length} errors)` : '');
-      this.progressEnd(errors.length === 0, message);
+      this.progressEnd(errors.length === 0, message, errors);
       this.lastProductSyncAt = new Date();
       return {
         success: errors.length === 0,
@@ -579,6 +593,24 @@ export class SyncService {
       where: { magentoId: magentoProd.id },
       relations: ['categories'],
     });
+
+    // Reconcile by SKU. A product deleted and re-created in Magento gets
+    // a new id; the POS row still carries the old one, so the insert
+    // below used to die on the unique SKU index ("Duplicate entry ...")
+    // every sync — those were the "35 errors". Adopt the new id instead.
+    if (!product && magentoProd.sku) {
+      const bySku = await this.productRepository.findOne({
+        where: { sku: magentoProd.sku },
+        relations: ['categories'],
+      });
+      if (bySku) {
+        this.logger.warn(
+          `Reconciling ${magentoProd.sku}: magento_id ${bySku.magentoId} -> ${magentoProd.id}`,
+        );
+        bySku.magentoId = magentoProd.id;
+        product = bySku;
+      }
+    }
 
     const productType = this.mapProductType(magentoProd.type_id);
 
@@ -753,10 +785,14 @@ export class SyncService {
       }
 
       // Log the sync
-      await this.logSync('customers', customersCreated + customersUpdated, errors.length === 0);
+      await this.logSync('customers', customersCreated + customersUpdated, errors.length === 0, {
+        created: customersCreated,
+        updated: customersUpdated,
+        errors,
+      });
 
       const message = `Customer sync completed: ${customersCreated} created, ${customersUpdated} updated`;
-      this.progressEnd(errors.length === 0, message);
+      this.progressEnd(errors.length === 0, message, errors);
       return {
         success: errors.length === 0,
         message,
@@ -1226,7 +1262,11 @@ export class SyncService {
         this.orderSyncProgress.processed++;
       }
 
-      await this.logSync('orders', ordersCreated + ordersUpdated, errors.length === 0);
+      await this.logSync('orders', ordersCreated + ordersUpdated, errors.length === 0, {
+        created: ordersCreated,
+        updated: ordersUpdated,
+        errors,
+      });
 
       this.orderSyncProgress.running = false;
       this.orderSyncProgress.finishedAt = new Date();
@@ -1389,7 +1429,12 @@ export class SyncService {
     return this.fullSync();
   }
 
-  private async logSync(entityType: 'products' | 'categories' | 'customers' | 'orders', recordsProcessed: number, success: boolean): Promise<void> {
+  private async logSync(
+    entityType: 'products' | 'categories' | 'customers' | 'orders',
+    recordsProcessed: number,
+    success: boolean,
+    extra: { created?: number; updated?: number; errors?: string[] } = {},
+  ): Promise<void> {
     try {
       const syncTypeMap: Record<string, SyncType> = {
         products: SyncType.PRODUCTS,
@@ -1398,12 +1443,27 @@ export class SyncService {
         orders: SyncType.ORDERS,
       };
       const syncType = syncTypeMap[entityType];
+      const errors = extra.errors || [];
+      // A run that walked the whole catalogue but tripped on a few
+      // records is PARTIAL, not FAILED — it did sync 16k products and
+      // must count as the "last sync". FAILED is reserved for a run
+      // that aborted (Magento unreachable, etc).
+      const status = success
+        ? SyncLogStatus.COMPLETED
+        : recordsProcessed > 0
+          ? SyncLogStatus.PARTIAL
+          : SyncLogStatus.FAILED;
       const log = this.syncLogRepository.create({
         syncType,
         direction: SyncDirection.MAGENTO_TO_POS,
-        status: success ? SyncLogStatus.COMPLETED : SyncLogStatus.FAILED,
+        status,
         recordsProcessed,
-        startedAt: new Date(),
+        recordsCreated: extra.created ?? 0,
+        recordsUpdated: extra.updated ?? 0,
+        recordsFailed: errors.length,
+        errorMessage: errors.length > 0 ? errors.slice(0, 10).join('\n').slice(0, 4000) : null,
+        errorDetails: errors.length > 0 ? { errors: errors.slice(0, 100) } : null,
+        startedAt: this.syncProgress?.startedAt ? new Date(this.syncProgress.startedAt) : new Date(),
         completedAt: new Date(),
       });
       await this.syncLogRepository.save(log);
@@ -1414,14 +1474,33 @@ export class SyncService {
 
   async getSyncStatus(): Promise<{
     lastSync: Date | null;
+    lastSyncStatus: string | null;
+    lastSyncType: string | null;
+    lastSyncFailed: number;
+    lastSuccessfulSync: Date | null;
     productCount: number;
     categoryCount: number;
     customerCount: number;
   }> {
-    const lastLog = await this.syncLogRepository.findOne({
-      where: { status: SyncLogStatus.COMPLETED },
-      order: { completedAt: 'DESC' },
-    });
+    // "Last Sync" used to mean the last run with ZERO errors, so a run
+    // that updated 16k products but tripped on 35 didn't count and the
+    // card sat on a date two weeks old while the auto-sync card showed
+    // last night. Now: the last run that finished (completed / partial
+    // / failed), with the last clean run alongside.
+    const [lastLog, lastClean] = await Promise.all([
+      this.syncLogRepository.findOne({
+        where: [
+          { status: SyncLogStatus.COMPLETED },
+          { status: SyncLogStatus.PARTIAL },
+          { status: SyncLogStatus.FAILED },
+        ],
+        order: { completedAt: 'DESC' },
+      }),
+      this.syncLogRepository.findOne({
+        where: { status: SyncLogStatus.COMPLETED },
+        order: { completedAt: 'DESC' },
+      }),
+    ]);
 
     const productCount = await this.productRepository.count();
     const categoryCount = await this.categoryRepository.count();
@@ -1429,6 +1508,10 @@ export class SyncService {
 
     return {
       lastSync: lastLog?.completedAt || null,
+      lastSyncStatus: lastLog?.status || null,
+      lastSyncType: lastLog?.syncType || null,
+      lastSyncFailed: lastLog?.recordsFailed ?? 0,
+      lastSuccessfulSync: lastClean?.completedAt || null,
       productCount,
       categoryCount,
       customerCount,
