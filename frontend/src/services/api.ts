@@ -125,6 +125,9 @@ export const ordersApi = {
   }) => api.get('/orders', { params }),
 
   getOrder: (id: number) => api.get(`/orders/${id}`),
+  // Per-line status from the order screen (backorder / layby / paid).
+  setItemStatus: (id: number, itemId: number, status: 'backorder' | 'layby' | 'paid') =>
+    api.patch(`/orders/${id}/items/${itemId}/status`, { status }),
 
   createOrder: (data: any) => api.post('/orders', data),
 

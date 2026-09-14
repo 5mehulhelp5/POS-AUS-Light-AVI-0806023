@@ -1014,6 +1014,7 @@ export default function POSPage() {
           item (negative productId, same code path as Custom Item). */}
       {showStripCut && (
         <StripCutModal
+          defaultTrade={cart.customerIsTrade}
           onClose={() => setShowStripCut(false)}
           onSendToCart={(lines) => {
             lines.forEach((l, i) => {

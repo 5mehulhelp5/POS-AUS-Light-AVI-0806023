@@ -100,6 +100,11 @@ interface OrderLine {
 
 interface Props {
   onClose: () => void;
+  // Cart's trade flag. The modal used to open on retail every time, so
+  // trade customers were quoted retail per-metre rates unless the
+  // cashier remembered the toggle (Sally, 10 Sep: "Trade prices not
+  // being applied to led strip lighting").
+  defaultTrade?: boolean;
   onSendToCart: (
     lines: Array<{ sku: string; name: string; price: number }>,
   ) => void;
@@ -112,7 +117,7 @@ const money = (n: number) =>
     minimumFractionDigits: 2,
   });
 
-export default function StripCutModal({ onClose, onSendToCart }: Props) {
+export default function StripCutModal({ onClose, defaultTrade = false, onSendToCart }: Props) {
   const [products, setProducts] = useState<StripProduct[]>(
     FALLBACK_STRIP_PRODUCTS,
   );
@@ -128,7 +133,7 @@ export default function StripCutModal({ onClose, onSendToCart }: Props) {
   const [tailMStr, setTailMStr] = useState('1');
   // How many identical cut strips (Sally, 7 Sep: "add 4x 1m led strip").
   const [qtyStr, setQtyStr] = useState('1');
-  const [isTrade, setIsTrade] = useState(false);
+  const [isTrade, setIsTrade] = useState(defaultTrade);
   const [order, setOrder] = useState<OrderLine[]>([]);
 
   // Pull admin-maintained rates. Falls back to the built-in list on

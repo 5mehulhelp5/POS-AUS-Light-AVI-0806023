@@ -1741,6 +1741,130 @@ export class OrdersService {
    * Decrements stock and, if every backorder line on the order is now
    * fulfilled, transitions the order from BACKORDER_PENDING to COMPLETE.
    */
+  // Per-line status change from the order screen (Sally, 10 Sep: "click
+  // on individual product line items... status drop down: Back Order /
+  // Lay-by / Paid"). Rewrites the line's flags, nudges the order-level
+  // status for standard orders, and writes a timeline event.
+  //
+  // NOTE: 'paid' on an open backorder line clears the flag WITHOUT the
+  // stock decrement that "mark as received" (fulfillBackorderItems)
+  // performs — use the green tick when stock has physically arrived.
+  async setItemStatus(
+    orderId: number,
+    itemId: number,
+    status: 'backorder' | 'layby' | 'paid',
+    userId: number,
+  ): Promise<Order> {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      relations: ['items'],
+    });
+    if (!order) throw new BadRequestException('Order not found');
+    if (
+      order.status === OrderStatus.CANCELLED ||
+      order.status === OrderStatus.REFUNDED
+    ) {
+      throw new BadRequestException(
+        `Order ${order.orderNumber} is ${order.status} — item status can't be changed`,
+      );
+    }
+    const item = order.items.find((i) => i.id === itemId);
+    if (!item) throw new BadRequestException(`Item ${itemId} is not on this order`);
+
+    const labelOf = (i: OrderItem): string =>
+      i.isBackorder && !i.backorderFulfilledAt
+        ? 'Back Order'
+        : i.isLaybyHeld
+          ? 'Lay-by'
+          : 'Paid';
+    const before = labelOf(item);
+
+    if (status === 'backorder') {
+      item.isBackorder = true;
+      item.backorderFulfilledAt = null;
+      item.isLaybyHeld = false;
+    } else if (status === 'layby') {
+      item.isLaybyHeld = true;
+      item.isBackorder = false;
+      item.backorderFulfilledAt = null;
+    } else {
+      item.isBackorder = false;
+      item.backorderFulfilledAt = null;
+      item.isLaybyHeld = false;
+    }
+    const after = labelOf(item);
+    if (before === after) {
+      return (await this.findById(orderId)) as Order;
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      await queryRunner.manager.save(item);
+
+      // Order-level status follows the lines for standard (non-layby)
+      // orders: any open backorder line => BACKORDER_PENDING; none left
+      // => COMPLETE if paid in full, else PENDING so the balance can be
+      // collected. Laybys are governed by their payment schedule.
+      if (order.orderType !== 'layby') {
+        const openBackorder = order.items.some(
+          (i) => i.isBackorder && !i.backorderFulfilledAt,
+        );
+        const movable = new Set<string>([
+          OrderStatus.PENDING,
+          OrderStatus.COMPLETE,
+          OrderStatus.BACKORDER_PENDING,
+        ]);
+        if (movable.has(order.status)) {
+          if (openBackorder) {
+            order.status = OrderStatus.BACKORDER_PENDING;
+          } else {
+            const paidRow = await queryRunner.manager
+              .createQueryBuilder(Payment, 'p')
+              .where('p.orderId = :orderId', { orderId })
+              .andWhere('p.status = :status', {
+                status: PaymentEntityStatus.COMPLETED,
+              })
+              .select('COALESCE(SUM(p.amount), 0)', 'total')
+              .getRawOne();
+            const paidTotal = Number(paidRow?.total || 0);
+            const balanceOwed = paidTotal + 0.01 < Number(order.grandTotal);
+            order.status = balanceOwed ? OrderStatus.PENDING : OrderStatus.COMPLETE;
+            if (!balanceOwed) order.paymentStatus = PaymentStatus.PAID;
+          }
+          await queryRunner.manager.save(order);
+        }
+      }
+
+      try {
+        const editor = await queryRunner.manager.findOne(User, { where: { id: userId } });
+        const who = editor
+          ? [editor.firstName, editor.lastName].filter(Boolean).join(' ')
+          : `user #${userId}`;
+        await queryRunner.manager.save(
+          queryRunner.manager.create(OrderEvent, {
+            orderId,
+            userId,
+            type: 'item_status',
+            description: `${item.quantity}x ${item.name}: status changed from ${before} to ${after} by ${who}.`,
+          }),
+        );
+      } catch (evErr) {
+        // eslint-disable-next-line no-console
+        console.error(`[orders.setItemStatus] event write failed for order ${orderId}:`, evErr);
+      }
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+    return (await this.findById(orderId)) as Order;
+  }
+
   async fulfillBackorderItems(
     orderId: number,
     itemIds: number[],

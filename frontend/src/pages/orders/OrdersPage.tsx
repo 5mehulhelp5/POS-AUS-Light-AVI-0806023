@@ -34,6 +34,9 @@ interface Order {
   orderType?: 'standard' | 'layby';
   laybyExpiresAt?: string | null;
   hasBackorderItems?: boolean;
+  backorderOpenCount?: number;
+  backorderFulfilledCount?: number;
+  laybyHeldCount?: number;
   syncStatus?: 'pending' | 'synced' | 'failed';
   syncError?: string | null;
   magentoOrderId?: string | null;
@@ -305,7 +308,9 @@ export default function OrdersPage() {
           originalQty: item.quantity,
           remainingQty: remaining,
           selected: false,
-          quantity: remaining > 0 ? 1 : 0,
+          // Starts at 0 so the cashier types the quantity being
+          // returned (Sally, 10 Sep: "Make number to Zero in refund qty").
+          quantity: 0,
           restock: true,
         };
       });
@@ -327,6 +332,49 @@ export default function OrdersPage() {
       toast.error('Failed to load order for refund');
     }
   };
+
+  // Per-line status change from the order screen (Sally, 10 Sep). The
+  // dropdown's current value is derived from the line's flags; the
+  // server rewrites them, nudges the order status and logs an event.
+  const [itemStatusSaving, setItemStatusSaving] = useState<number | null>(null);
+  const lineStatusValue = (item: any): 'backorder' | 'layby' | 'paid' =>
+    item.isBackorder && !item.backorderFulfilledAt
+      ? 'backorder'
+      : item.isLaybyHeld
+        ? 'layby'
+        : 'paid';
+  const handleSetItemStatus = async (
+    order: any,
+    item: any,
+    status: 'backorder' | 'layby' | 'paid',
+  ) => {
+    if (lineStatusValue(item) === status) return;
+    setItemStatusSaving(item.id);
+    try {
+      await ordersApi.setItemStatus(order.id, item.id, status);
+      const fresh = await ordersApi.getOrder(order.id);
+      setSelectedOrder({ ...fresh.data.data.order, refunds: order.refunds || [] });
+      toast.success(
+        `${item.name} marked ${status === 'backorder' ? 'Back Order' : status === 'layby' ? 'Lay-by' : 'Paid'}`,
+      );
+      fetchOrders();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to change item status');
+    } finally {
+      setItemStatusSaving(null);
+    }
+  };
+  // Refunded quantity per line, from the refunds already loaded on the
+  // selected order, so a line can show Lay-by AND Refunded together.
+  const refundedQtyFor = (order: any, itemId: number): number =>
+    (order?.refunds || []).reduce(
+      (sum: number, r: any) =>
+        sum +
+        (r.items || [])
+          .filter((ri: any) => ri.orderItemId === itemId)
+          .reduce((s2: number, ri: any) => s2 + (Number(ri.quantity) || 0), 0),
+      0,
+    );
 
   const updateRefundItem = (idx: number, patch: Partial<RefundSelection>) => {
     setRefundItems((prev) =>
@@ -355,7 +403,7 @@ export default function OrdersPage() {
       }));
 
     if (items.length === 0) {
-      toast.error('Select at least one item to refund');
+      toast.error('Enter a refund quantity for at least one item');
       return;
     }
     if (refundReason === 'other' && !refundReasonText.trim()) {
@@ -793,7 +841,29 @@ export default function OrdersPage() {
                       )}
                     </button>
                   </td>
-                  <td className="px-4 py-3">{order.itemCount}</td>
+                  <td className="px-4 py-3">
+                    {/* Per-line statuses in the summary (Sally, 10 Sep:
+                        "multiple statuses must be displayed in the order
+                        summary"). */}
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span>{order.itemCount}</span>
+                      {(order.backorderOpenCount ?? 0) > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-cyan-600/30 text-cyan-300 whitespace-nowrap">
+                          {order.backorderOpenCount} Back Order
+                        </span>
+                      )}
+                      {(order.laybyHeldCount ?? 0) > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-600/30 text-amber-300 whitespace-nowrap">
+                          {order.laybyHeldCount} Lay-by
+                        </span>
+                      )}
+                      {(order.backorderFulfilledCount ?? 0) > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
+                          {order.backorderFulfilledCount} Received
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3 font-medium">${order.grandTotal.toFixed(2)}</td>
                   <td className="px-4 py-3">
                     {getStatusBadge(
@@ -991,26 +1061,79 @@ export default function OrdersPage() {
               <div>
                 <p className="text-sm text-gray-400 mb-2">Items</p>
                 <div className="bg-pos-dark rounded p-3 space-y-2">
-                  {selectedOrder.items?.map((item: any) => (
-                    <div key={item.id} className="flex justify-between items-center gap-2">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                  {selectedOrder.items?.map((item: any) => {
+                    const refundedQty = refundedQtyFor(selectedOrder, item.id);
+                    const openBackorder = item.isBackorder && !item.backorderFulfilledAt;
+                    const statusLocked =
+                      selectedOrder.status === 'cancelled' ||
+                      selectedOrder.status === 'refunded' ||
+                      refundedQty >= item.quantity;
+                    return (
+                    <div key={item.id} className="flex justify-between items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
                         <span className="truncate">
                           {item.quantity}x {item.name}
                         </span>
-                        {item.isBackorder && !item.backorderFulfilledAt && (
+                        {/* A line can carry several statuses at once
+                            (Sally, 10 Sep: "an item may have both Lay-by
+                            and Refund statuses"). */}
+                        {openBackorder && (
                           <span
                             className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-cyan-600/30 text-cyan-300 whitespace-nowrap"
                             title="Ordering from supplier"
                           >
-                            Backorder · Ordering from supplier
+                            Back Order
                           </span>
                         )}
                         {item.isBackorder && item.backorderFulfilledAt && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
-                            Fulfilled
+                            Received
                           </span>
                         )}
+                        {item.isLaybyHeld && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-600/30 text-amber-300 whitespace-nowrap"
+                            title="Held in store until the balance is paid"
+                          >
+                            Lay-by
+                          </span>
+                        )}
+                        {refundedQty > 0 && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-orange-600/30 text-orange-300 whitespace-nowrap">
+                            {refundedQty >= item.quantity
+                              ? 'Refunded'
+                              : `Refunded ${refundedQty} of ${item.quantity}`}
+                          </span>
+                        )}
+                        {!openBackorder &&
+                          !item.isLaybyHeld &&
+                          refundedQty < item.quantity &&
+                          selectedOrder.paymentStatus === 'paid' && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
+                              Paid
+                            </span>
+                          )}
                       </div>
+                      {/* Status drop-down per line (Sally, 10 Sep). */}
+                      {canRefund && !statusLocked && (
+                        <select
+                          className="input py-0.5 px-2 text-xs w-32"
+                          value={lineStatusValue(item)}
+                          disabled={itemStatusSaving === item.id}
+                          title="Change this item's status"
+                          onChange={(e) =>
+                            handleSetItemStatus(
+                              selectedOrder,
+                              item,
+                              e.target.value as 'backorder' | 'layby' | 'paid',
+                            )
+                          }
+                        >
+                          <option value="backorder">Back Order</option>
+                          <option value="layby">Lay-by</option>
+                          <option value="paid">Paid</option>
+                        </select>
+                      )}
                       <span className="whitespace-nowrap">${parseFloat(item.rowTotal).toFixed(2)}</span>
                       {canManage &&
                         item.isBackorder &&
@@ -1024,7 +1147,8 @@ export default function OrdersPage() {
                           </button>
                         )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1078,7 +1202,7 @@ export default function OrdersPage() {
                   <span>${parseFloat(selectedOrder.taxAmount).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-bold text-lg mt-2">
-                  <span>Total</span>
+                  <span>Order Total</span>
                   <span>${parseFloat(selectedOrder.grandTotal).toFixed(2)}</span>
                 </div>
                 {/* Deposit / balance reflection (Sally, 9 Sep: order 0067
@@ -1280,7 +1404,7 @@ export default function OrdersPage() {
             {laybyBalance && (
               <div className="bg-pos-dark rounded-lg p-4 mb-4 grid grid-cols-3 gap-3 text-center">
                 <div>
-                  <p className="text-xs text-gray-400">Total</p>
+                  <p className="text-xs text-gray-400">Order Total</p>
                   <p className="text-lg font-bold">${laybyBalance.grandTotal.toFixed(2)}</p>
                 </div>
                 <div>
@@ -1536,16 +1660,17 @@ export default function OrdersPage() {
                       <td className="px-3 py-2">
                         <input
                           type="number"
-                          min={1}
+                          min={0}
                           max={item.remainingQty}
                           value={item.quantity}
-                          disabled={!item.selected || item.remainingQty === 0}
+                          disabled={item.remainingQty === 0}
                           onChange={(e) => {
                             const val = Math.max(
-                              1,
-                              Math.min(item.remainingQty, parseInt(e.target.value) || 1),
+                              0,
+                              Math.min(item.remainingQty, parseInt(e.target.value) || 0),
                             );
-                            updateRefundItem(idx, { quantity: val });
+                            // Typing a quantity ticks the line; back to 0 unticks it.
+                            updateRefundItem(idx, { quantity: val, selected: val > 0 });
                           }}
                           className="input text-center py-1 px-2 w-16 mx-auto block"
                         />

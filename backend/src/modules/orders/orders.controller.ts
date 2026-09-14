@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  BadRequestException,
   Body,
   Param,
   Query,
@@ -95,6 +96,12 @@ export class OrdersController {
           orderType: o.orderType,
           laybyExpiresAt: o.laybyExpiresAt,
           hasBackorderItems: o.items.some((i) => i.isBackorder),
+          // Per-line status counts for the list's Items column (Sally,
+          // 10 Sep: "multiple statuses must be displayed in the order
+          // summary").
+          backorderOpenCount: o.items.filter((i) => i.isBackorder && !i.backorderFulfilledAt).length,
+          backorderFulfilledCount: o.items.filter((i) => i.isBackorder && !!i.backorderFulfilledAt).length,
+          laybyHeldCount: o.items.filter((i) => i.isLaybyHeld).length,
           magentoIncrementId: o.magentoIncrementId,
           magentoOrderId: o.magentoOrderId,
           syncStatus: o.syncStatus,
@@ -401,6 +408,25 @@ export class OrdersController {
   async expireLaybys() {
     const count = await this.ordersService.expireLaybys();
     return { success: true, data: { expired: count } };
+  }
+
+  @Patch(':id/items/:itemId/status')
+  @ApiOperation({
+    summary:
+      "Set one line item's status (backorder / layby / paid) from the order screen. Logs a timeline event.",
+  })
+  async setItemStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() body: { status?: string },
+    @CurrentUser() user: any,
+  ) {
+    const status = String(body?.status || '').toLowerCase();
+    if (status !== 'backorder' && status !== 'layby' && status !== 'paid') {
+      throw new BadRequestException('status must be backorder, layby or paid');
+    }
+    const order = await this.ordersService.setItemStatus(id, itemId, status, user.id);
+    return { success: true, data: { order } };
   }
 
   @Post(':id/backorder/fulfill')
