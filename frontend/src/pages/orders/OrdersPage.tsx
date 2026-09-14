@@ -100,6 +100,11 @@ interface RefundSelection {
   selected: boolean;
   quantity: number;
   restock: boolean;
+  // Line status flags so the refund screen can show the same badges as
+  // the order screen (Sally, 10 Sep, row 471).
+  isBackorder: boolean;
+  backorderFulfilledAt: string | null;
+  isLaybyHeld: boolean;
 }
 
 export default function OrdersPage() {
@@ -262,10 +267,16 @@ export default function OrdersPage() {
         ordersApi.getOrder(id),
         ordersApi.getRefunds(id),
       ]);
+      const full = orderRes.data.data.order;
       setSelectedOrder({
-        ...orderRes.data.data.order,
+        ...full,
         refunds: refundsRes.data.data.refunds,
       });
+      // The order screen takes the balance payment inline (Sally, 10 Sep,
+      // row 467: open orders in the Balance Payment format).
+      setLaybyPayAmount(balanceDue(full).toFixed(2));
+      setLaybyPayMethod('eftpos');
+      setLaybyPayRef('');
     } catch (error) {
       console.error('Failed to fetch order:', error);
     }
@@ -312,6 +323,9 @@ export default function OrdersPage() {
           // returned (Sally, 10 Sep: "Make number to Zero in refund qty").
           quantity: 0,
           restock: true,
+          isBackorder: !!item.isBackorder,
+          backorderFulfilledAt: item.backorderFulfilledAt || null,
+          isLaybyHeld: !!item.isLaybyHeld,
         };
       });
 
@@ -463,6 +477,8 @@ export default function OrdersPage() {
       });
       setRefundOrder(null);
       fetchOrders();
+      // The order screen stays open underneath — bring it up to date.
+      if (selectedOrder) viewOrder(selectedOrder.id);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Refund failed');
     } finally {
@@ -663,6 +679,51 @@ export default function OrdersPage() {
     }
   };
 
+  // Record Payment from the order screen itself (Sally, 10 Sep, row 467).
+  // Same API as the standalone Balance Payment modal; on success the
+  // instalment receipt pops and the order screen refreshes in place.
+  const handleRecordInlinePayment = async () => {
+    if (!selectedOrder) return;
+    const amount = parseFloat(laybyPayAmount);
+    if (!amount || amount <= 0) {
+      toast.error('Enter a payment amount');
+      return;
+    }
+    setIsTakingLaybyPayment(true);
+    try {
+      const res = await ordersApi.takeLaybyPayment(selectedOrder.id, {
+        amount,
+        method: laybyPayMethod,
+        reference: laybyPayRef.trim() || undefined,
+      });
+      const newStatus = res.data?.data?.order?.status;
+      if (newStatus === 'complete') {
+        toast.success(`${selectedOrder.orderNumber} fully paid — marked complete`);
+      } else {
+        toast.success(`Payment of $${amount.toFixed(2)} recorded`);
+      }
+      const priorPaid = paidTotal(selectedOrder);
+      const total = parseFloat(selectedOrder.grandTotal);
+      setLaybyReceipt({
+        order: selectedOrder,
+        amount,
+        method: laybyPayMethod,
+        reference: laybyPayRef.trim() || null,
+        paidToDate: Math.round((priorPaid + amount) * 100) / 100,
+        balanceAfter: Math.max(0, Math.round((total - priorPaid - amount) * 100) / 100),
+        grandTotal: total,
+        isFinal: newStatus === 'complete',
+        date: new Date().toISOString(),
+      });
+      await viewOrder(selectedOrder.id);
+      fetchOrders();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to record payment');
+    } finally {
+      setIsTakingLaybyPayment(false);
+    }
+  };
+
   const handleCancelLayby = async (order: Order) => {
     if (
       !window.confirm(
@@ -814,11 +875,13 @@ export default function OrdersPage() {
                   </td>
                   <td className="px-4 py-3">
                     {/* Sally, 7 Sep: clicking the customer's name opens
-                        the same refund/edit screen as the yellow arrow. */}
+                        the order, same as the yellow arrow. Since 10 Sep
+                        (row 467) that is the order screen in the Balance
+                        Payment format; Refund lives on it. */}
                     <button
-                      onClick={() => canRefund && openRefundModal(order)}
-                      className={canRefund ? 'text-left hover:underline' : 'text-left cursor-default'}
-                      title={canRefund ? 'Open / edit this order' : undefined}
+                      onClick={() => viewOrder(order.id)}
+                      className="text-left hover:underline"
+                      title="Open this order"
                     >
                       {order.customer ? (
                         <span className="flex items-center gap-2">
@@ -907,9 +970,9 @@ export default function OrdersPage() {
                           left to select, but Add Lights still works. */}
                       {canRefund && (
                         <button
-                          onClick={() => openRefundModal(order)}
+                          onClick={() => viewOrder(order.id)}
                           className="p-2 hover:bg-orange-500/20 text-orange-400 rounded"
-                          title="Refund / Edit Order"
+                          title="Open Order — refund, exchange, add lights, take payment"
                         >
                           <ArrowUturnLeftIcon className="h-5 w-5" />
                         </button>
@@ -996,71 +1059,85 @@ export default function OrdersPage() {
         <div className="modal-backdrop">
           <div className="modal-content">
             <div className="max-w-4xl mx-auto">
-            <div className="flex justify-between items-start mb-4">
+            {/* Order screen in the Balance Payment format (Sally, 10 Sep,
+                row 467: "when opening an order show the screen in this
+                format"): status + order number up top, Order Total / Paid
+                / Balance tiles, the item list with every status badge,
+                the payment fields inline, then Cancel / Add Lights /
+                Refund Credits & Exchange / Refund / Record Payment, with
+                the Order History underneath. */}
+            <div className="flex justify-between items-start mb-4 gap-3 flex-wrap">
               <button onClick={() => setSelectedOrder(null)} className="modal-back-btn">
                 <ArrowLeftIcon className="h-5 w-5" /> Back
               </button>
-              <div className="flex items-center gap-3">
-                {/* Edit Items — only when the order is still open.
-                    Complete/refunded/cancelled orders have a frozen
-                    item list (server enforces the same rule). */}
-                {['pending', 'processing', 'backorder_pending', 'layby_active', 'layby_expired'].includes(
+              <div className="flex items-center gap-2">
+                {getStatusBadge(
                   selectedOrder.status,
-                ) && (
-                  <button
-                    className="btn-secondary flex items-center gap-2 text-sm"
-                    onClick={() => setEditItemsOrder(selectedOrder)}
-                    title="Add/remove products, fix quantities or prices while the order is open"
-                  >
-                    Edit Items
-                  </button>
+                  (selectedOrder.exchangedToOrders || []).length > 0,
                 )}
-                <button
-                  className="btn-secondary flex items-center gap-2 text-sm"
-                  onClick={() => {
-                    const id = selectedOrder.id;
-                    setSelectedOrder(null);
-                    printInvoice(id);
-                  }}
-                >
-                  <PrinterIcon className="h-4 w-4" /> Print Invoice
-                </button>
-                <div className="text-right">
-                  {/* Status badge next to the order number (Sally, 9 Sep:
-                      "needs to say 'Complete'... and all other statuses"). */}
-                  <div className="flex items-center justify-end gap-2">
-                    {getStatusBadge(
-                      selectedOrder.status,
-                      (selectedOrder.exchangedToOrders || []).length > 0,
-                    )}
-                    <h2 className="text-xl font-bold">{selectedOrder.orderNumber}</h2>
-                  </div>
-                  <p className="text-sm text-gray-400">{formatDate(selectedOrder.createdAt)}</p>
+                <h2 className="text-xl font-bold">Order {selectedOrder.orderNumber}</h2>
+              </div>
+              <div className="text-right">
+                <div className="flex items-center justify-end gap-2 mb-1">
+                  {['pending', 'processing', 'backorder_pending', 'layby_active', 'layby_expired'].includes(
+                    selectedOrder.status,
+                  ) && (
+                    <button
+                      className="btn-secondary text-xs py-1"
+                      onClick={() => setEditItemsOrder(selectedOrder)}
+                      title="Add/remove products, fix quantities or prices while the order is open"
+                    >
+                      Edit Items
+                    </button>
+                  )}
+                  <button
+                    className="btn-secondary flex items-center gap-1 text-xs py-1"
+                    onClick={() => {
+                      const id = selectedOrder.id;
+                      setSelectedOrder(null);
+                      printInvoice(id);
+                    }}
+                  >
+                    <PrinterIcon className="h-4 w-4" /> Print Invoice
+                  </button>
                 </div>
+                <h3 className="text-lg font-semibold">
+                  {canTakePayment(selectedOrder)
+                    ? selectedOrder.orderType === 'layby'
+                      ? 'Lay By Payment'
+                      : 'Balance Payment'
+                    : 'Order Details'}
+                </h3>
+                <p className="text-sm text-gray-400">
+                  {selectedOrder.orderNumber} · {formatDate(selectedOrder.createdAt)}
+                </p>
               </div>
             </div>
 
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="bg-pos-dark rounded-lg p-4 grid grid-cols-3 gap-3 text-center">
                 <div>
-                  <p className="text-sm text-gray-400">Customer</p>
-                  <p>
-                    {selectedOrder.customer
-                      ? `${selectedOrder.customer.firstName} ${selectedOrder.customer.lastName}`
-                      : 'Walk-in'}
-                  </p>
+                  <p className="text-xs text-gray-400">Order Total</p>
+                  <p className="text-lg font-bold">${parseFloat(selectedOrder.grandTotal).toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-400">Cashier</p>
-                  <p>
-                    {selectedOrder.user?.firstName} {selectedOrder.user?.lastName}
+                  <p className="text-xs text-gray-400">Paid</p>
+                  <p className="text-lg font-bold text-green-400">${paidTotal(selectedOrder).toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Balance</p>
+                  <p className={`text-lg font-bold ${balanceDue(selectedOrder) > 0.005 ? 'text-amber-300' : 'text-green-400'}`}>
+                    ${balanceDue(selectedOrder).toFixed(2)}
                   </p>
                 </div>
               </div>
 
-              <div>
-                <p className="text-sm text-gray-400 mb-2">Items</p>
-                <div className="bg-pos-dark rounded p-3 space-y-2">
+              <div className="bg-pos-dark rounded-lg p-4">
+                <p className="text-xs text-gray-400 uppercase mb-2">
+                  Items on this {selectedOrder.orderType === 'layby' ? 'Lay By' : 'Order'}
+                </p>
+                <table className="w-full text-sm">
+                  <tbody>
                   {selectedOrder.items?.map((item: any) => {
                     const refundedQty = refundedQtyFor(selectedOrder, item.id);
                     const openBackorder = item.isBackorder && !item.backorderFulfilledAt;
@@ -1069,37 +1146,35 @@ export default function OrdersPage() {
                       selectedOrder.status === 'refunded' ||
                       refundedQty >= item.quantity;
                     return (
-                    <div key={item.id} className="flex justify-between items-center gap-2 flex-wrap">
-                      <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
-                        <span className="truncate">
-                          {item.quantity}x {item.name}
-                        </span>
+                    <tr key={item.id} className="border-b border-gray-700 last:border-0">
+                      <td className="py-1.5 pr-2">
+                        <span className="font-medium">{item.quantity}× {item.name}</span>
+                        <span className="text-xs text-gray-500 font-mono ml-1">{item.sku}</span>
                         {/* A line can carry several statuses at once
-                            (Sally, 10 Sep: "an item may have both Lay-by
-                            and Refund statuses"). */}
+                            (Sally, 10 Sep, row 473). */}
                         {openBackorder && (
                           <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-cyan-600/30 text-cyan-300 whitespace-nowrap"
+                            className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-cyan-600/30 text-cyan-300 whitespace-nowrap"
                             title="Ordering from supplier"
                           >
                             Back Order
                           </span>
                         )}
                         {item.isBackorder && item.backorderFulfilledAt && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
                             Received
                           </span>
                         )}
                         {item.isLaybyHeld && (
                           <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-600/30 text-amber-300 whitespace-nowrap"
+                            className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-600/30 text-amber-300 whitespace-nowrap"
                             title="Held in store until the balance is paid"
                           >
                             Lay-by
                           </span>
                         )}
                         {refundedQty > 0 && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-orange-600/30 text-orange-300 whitespace-nowrap">
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-orange-600/30 text-orange-300 whitespace-nowrap">
                             {refundedQty >= item.quantity
                               ? 'Refunded'
                               : `Refunded ${refundedQty} of ${item.quantity}`}
@@ -1109,82 +1184,188 @@ export default function OrdersPage() {
                           !item.isLaybyHeld &&
                           refundedQty < item.quantity &&
                           selectedOrder.paymentStatus === 'paid' && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
+                            <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
                               Paid
                             </span>
                           )}
-                      </div>
-                      {/* Status drop-down per line (Sally, 10 Sep). */}
-                      {canRefund && !statusLocked && (
-                        <select
-                          className="input py-0.5 px-2 text-xs w-32"
-                          value={lineStatusValue(item)}
-                          disabled={itemStatusSaving === item.id}
-                          title="Change this item's status"
-                          onChange={(e) =>
-                            handleSetItemStatus(
-                              selectedOrder,
-                              item,
-                              e.target.value as 'backorder' | 'layby' | 'paid',
-                            )
-                          }
-                        >
-                          <option value="backorder">Back Order</option>
-                          <option value="layby">Lay-by</option>
-                          <option value="paid">Paid</option>
-                        </select>
-                      )}
-                      <span className="whitespace-nowrap">${parseFloat(item.rowTotal).toFixed(2)}</span>
-                      {canManage &&
-                        item.isBackorder &&
-                        !item.backorderFulfilledAt && (
-                          <button
-                            onClick={() => handleFulfilBackorder(selectedOrder, [item.id])}
-                            className="p-1.5 hover:bg-green-500/20 text-green-400 rounded"
-                            title="Mark this backorder item as received"
-                          >
-                            <CheckCircleIcon className="h-4 w-4" />
-                          </button>
-                        )}
-                    </div>
+                      </td>
+                      <td className="py-1.5 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-2 justify-end">
+                          {/* Status drop-down per line (Sally, 10 Sep, row 469). */}
+                          {canRefund && !statusLocked && (
+                            <select
+                              className="input py-0.5 px-2 text-xs w-32"
+                              value={lineStatusValue(item)}
+                              disabled={itemStatusSaving === item.id}
+                              title="Change this item's status"
+                              onChange={(e) =>
+                                handleSetItemStatus(
+                                  selectedOrder,
+                                  item,
+                                  e.target.value as 'backorder' | 'layby' | 'paid',
+                                )
+                              }
+                            >
+                              <option value="backorder">Back Order</option>
+                              <option value="layby">Lay-by</option>
+                              <option value="paid">Paid</option>
+                            </select>
+                          )}
+                          <span className="font-medium">${parseFloat(item.rowTotal).toFixed(2)}</span>
+                          {canManage && openBackorder && (
+                            <button
+                              onClick={() => handleFulfilBackorder(selectedOrder, [item.id])}
+                              className="p-1.5 hover:bg-green-500/20 text-green-400 rounded"
+                              title="Mark this backorder item as received (adjusts stock)"
+                            >
+                              <CheckCircleIcon className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
                     );
                   })}
+                  </tbody>
+                </table>
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-400 mt-2">
+                  <span>
+                    Customer:{' '}
+                    <span className="text-gray-200 uppercase">
+                      {selectedOrder.customer
+                        ? `${selectedOrder.customer.firstName} ${selectedOrder.customer.lastName || ''}`.trim()
+                        : selectedOrder.customerNameSnapshot || 'Walk-in'}
+                    </span>
+                  </span>
+                  <span>
+                    Cashier:{' '}
+                    <span className="text-gray-200">
+                      {selectedOrder.user?.firstName} {selectedOrder.user?.lastName}
+                    </span>
+                  </span>
+                  {selectedOrder.laybyExpiresAt && (
+                    <span>Lay By expires {formatDate(selectedOrder.laybyExpiresAt)}</span>
+                  )}
                 </div>
               </div>
 
-              {/* Balance-due actions — laybys AND deposit-paid backorders
-                  (Sally, 9 Sep: order 0067 took a deposit but had no way
-                  to complete payment). */}
+              {/* Payment fields inline — laybys AND deposit-paid
+                  backorders (Sally, 9 Sep: order 0067 had no way to
+                  complete payment; 10 Sep: in the Balance Payment format). */}
               {canTakePayment(selectedOrder) && (
-                <div className="border-t border-gray-700 pt-4 space-y-2">
-                  <p className="text-sm font-medium text-amber-300">
-                    {selectedOrder.orderType === 'layby'
-                      ? 'Lay By'
-                      : 'Balance owing'}
-                    {selectedOrder.laybyExpiresAt && (
-                      <span className="text-xs text-gray-400 ml-2">
-                        Expires {formatDate(selectedOrder.laybyExpiresAt)}
-                      </span>
-                    )}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      className="btn-primary bg-amber-600 hover:bg-amber-700 flex items-center gap-2"
-                      onClick={() => openLaybyPay(selectedOrder)}
-                    >
-                      <BanknotesIcon className="h-4 w-4" /> PAY — Take Payment
-                    </button>
-                    {canManage && selectedOrder.orderType === 'layby' && (
-                      <button
-                        className="btn-secondary"
-                        onClick={() => handleCancelLayby(selectedOrder)}
-                      >
-                        Cancel Lay By
-                      </button>
-                    )}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Amount</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      max={balanceDue(selectedOrder) || undefined}
+                      className="input"
+                      value={laybyPayAmount}
+                      onChange={(e) => setLaybyPayAmount(e.target.value)}
+                      disabled={isTakingLaybyPayment}
+                    />
                   </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Method</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {(['eftpos', 'cash', 'bank_transfer', 'store_credit'] as const).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          className={`py-2 rounded-md border text-sm font-medium ${
+                            laybyPayMethod === m
+                              ? 'border-primary-500 bg-primary-500/20 text-primary-200'
+                              : 'border-gray-600 text-gray-400 hover:border-gray-500'
+                          }`}
+                          onClick={() => setLaybyPayMethod(m)}
+                          disabled={isTakingLaybyPayment}
+                        >
+                          {m === 'eftpos'
+                            ? 'EFTPOS'
+                            : m === 'cash'
+                              ? 'Cash'
+                              : m === 'bank_transfer'
+                                ? 'Bank Transfer'
+                                : 'Store Credit'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {laybyPayMethod !== 'cash' && laybyPayMethod !== 'store_credit' && (
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Reference (optional)</label>
+                      <input
+                        type="text"
+                        className="input"
+                        value={laybyPayRef}
+                        onChange={(e) => setLaybyPayRef(e.target.value)}
+                        disabled={isTakingLaybyPayment}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* Action row, in the order Sally mocked up. Refund and
+                  Refund Credits & Exchange both open the item-selection
+                  screen (row 471). */}
+              <div className="flex flex-wrap gap-3 justify-end">
+                <button
+                  className="btn-secondary"
+                  onClick={() => setSelectedOrder(null)}
+                  disabled={isTakingLaybyPayment}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary bg-green-600 hover:bg-green-700"
+                  onClick={() => setEditItemsOrder(selectedOrder)}
+                  disabled={isTakingLaybyPayment}
+                  title="Add products to this order or change quantities"
+                >
+                  Add Lights
+                </button>
+                {canRefund && (
+                  <button
+                    className="btn-primary bg-cyan-600 hover:bg-cyan-700"
+                    onClick={() => openRefundModal(selectedOrder)}
+                    disabled={isTakingLaybyPayment}
+                    title="Pick the items to return, then exchange them"
+                  >
+                    Refund Credits &amp; Exchange
+                  </button>
+                )}
+                {canRefund && (
+                  <button
+                    className="btn-primary bg-orange-600 hover:bg-orange-700"
+                    onClick={() => openRefundModal(selectedOrder)}
+                    disabled={isTakingLaybyPayment}
+                    title="Pick the items to refund"
+                  >
+                    Refund
+                  </button>
+                )}
+                {canTakePayment(selectedOrder) && (
+                  <button
+                    className="btn-primary bg-amber-600 hover:bg-amber-700"
+                    onClick={handleRecordInlinePayment}
+                    disabled={isTakingLaybyPayment}
+                  >
+                    {isTakingLaybyPayment ? 'Recording...' : 'Record Payment'}
+                  </button>
+                )}
+                {canManage && selectedOrder.orderType === 'layby' && canTakePayment(selectedOrder) && (
+                  <button
+                    className="btn-secondary"
+                    onClick={() => handleCancelLayby(selectedOrder)}
+                    disabled={isTakingLaybyPayment}
+                  >
+                    Cancel Lay By
+                  </button>
+                )}
+              </div>
 
               <div className="border-t border-gray-700 pt-4">
                 <div className="flex justify-between text-sm">
@@ -1583,8 +1764,12 @@ export default function OrdersPage() {
                 the "Refund method" toggle above already shows where the
                 refund goes. */}
 
-            {/* Items */}
+            {/* Items — same list style and status badges as the order
+                screen (Sally, 10 Sep, row 471), plus the refund controls. */}
             <div className="mb-6">
+              <p className="text-xs text-gray-400 uppercase mb-2">
+                Items on this {refundOrder.orderType === 'layby' ? 'Lay By' : 'Order'}
+              </p>
               <table className="w-full text-sm">
                 <thead className="bg-pos-accent">
                   <tr>
@@ -1653,8 +1838,30 @@ export default function OrdersPage() {
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <p className="font-medium">{item.name}</p>
-                        <p className="text-xs text-gray-400">{item.sku}</p>
+                        <span className="font-medium">{item.originalQty}× {item.name}</span>
+                        <span className="text-xs text-gray-500 font-mono ml-1">{item.sku}</span>
+                        {item.isBackorder && !item.backorderFulfilledAt && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-cyan-600/30 text-cyan-300 whitespace-nowrap">
+                            Back Order
+                          </span>
+                        )}
+                        {item.isBackorder && item.backorderFulfilledAt && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/30 text-green-300 whitespace-nowrap">
+                            Received
+                          </span>
+                        )}
+                        {item.isLaybyHeld && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-600/30 text-amber-300 whitespace-nowrap">
+                            Lay-by
+                          </span>
+                        )}
+                        {item.originalQty - item.remainingQty > 0 && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-orange-600/30 text-orange-300 whitespace-nowrap">
+                            {item.remainingQty === 0
+                              ? 'Refunded'
+                              : `Refunded ${item.originalQty - item.remainingQty} of ${item.originalQty}`}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-center">{item.remainingQty}</td>
                       <td className="px-3 py-2">
@@ -1692,6 +1899,14 @@ export default function OrdersPage() {
                   ))}
                 </tbody>
               </table>
+              <p className="text-xs text-gray-400 mt-2">
+                Customer:{' '}
+                <span className="text-gray-200 uppercase">
+                  {refundOrder.customer
+                    ? `${refundOrder.customer.firstName} ${refundOrder.customer.lastName || ''}`.trim()
+                    : refundOrder.customerNameSnapshot || 'Walk-in'}
+                </span>
+              </p>
             </div>
 
             {/* Reason */}
