@@ -596,7 +596,9 @@ export default function PaymentModal({
     // (later) follow up on expiry. If the cashier only typed inline
     // invoice details, require at minimum a name and phone — we'll
     // auto-create the customer record before submitting the order.
-    if (isLayby && !cart.customerId) {
+    // A "Hold on Lay By" line makes the order a lay-by too (the server
+    // rejects it without a customer — Sally's 14 Sep video).
+    if ((isLayby || hasLaybyHeldLine) && !cart.customerId) {
       if (!customerName.trim() || !customerPhone.trim()) {
         toast.error(
           'Lay By needs a customer name and phone (or pick an existing customer)',
@@ -701,7 +703,7 @@ export default function PaymentModal({
         // one here so the order can attach to it and we can follow up
         // later.
         let customerIdToUse = cart.customerId;
-        if (isLayby && !customerIdToUse) {
+        if ((isLayby || hasLaybyHeldLine) && !customerIdToUse) {
           const parts = customerName.trim().split(/\s+/);
           const firstName = parts.shift() || customerName.trim();
           // Last name is optional now; only send it if the cashier
@@ -741,7 +743,7 @@ export default function PaymentModal({
         const orderData = {
           customerId: customerIdToUse,
           customerName: nameSnapshot || undefined,
-          orderType: isLayby ? 'layby' : 'standard',
+          orderType: isLayby || hasLaybyHeldLine ? 'layby' : 'standard',
           // Tell the server when the cashier explicitly marked this as a
           // trade order via the PaymentModal Trade button. Server uses
           // this OR'd with customer.isTrade to decide if trade auto-
@@ -874,7 +876,7 @@ export default function PaymentModal({
           }
         }
 
-        if (isLayby) {
+        if (isLayby || hasLaybyHeldLine) {
           toast.success(
             `Lay By ${orderNumber} created. Deposit $${depositDue.toFixed(2)} received. Balance $${(totalWithDelivery - depositDue).toFixed(2)}.`,
           );

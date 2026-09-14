@@ -57,40 +57,86 @@ export default function OrderReviewModal({
     ...(initialSelections?.laybyHeldQtyByProductId || {}),
   }));
 
+  // A line can be BOTH backorder and lay-by held (Sally, 9 Sep: "Back
+  // order 3 and Layby the 2"; 14 Sep video: ticking Backorder wiped the
+  // Lay By tick). Ticking the second flag takes one unit off the first
+  // so the split is visible straight away; the spinners then keep
+  // backorder + held <= quantity. A single-unit line can't be split, so
+  // there the flags stay exclusive.
   const toggleBackorder = (id: number, qty: number, checked: boolean) => {
     setBackorder((prev) => ({ ...prev, [id]: checked }));
-    setBackorderQty((prev) => {
-      const next = { ...prev };
-      if (checked) next[id] = qty;
-      else delete next[id];
-      return next;
-    });
-    // Mutually exclusive with held — clear held if backorder turned on.
-    if (checked) {
+    if (!checked) {
+      setBackorderQty((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+    const heldOn = !!layby[id];
+    if (heldOn && qty <= 1) {
       setLayby((prev) => ({ ...prev, [id]: false }));
       setLaybyQty((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
+      setBackorderQty((prev) => ({ ...prev, [id]: qty }));
+      return;
     }
+    const held = heldOn ? Math.min(qty - 1, laybyQty[id] ?? qty) : 0;
+    if (heldOn) setLaybyQty((prev) => ({ ...prev, [id]: held }));
+    setBackorderQty((prev) => ({ ...prev, [id]: qty - held }));
   };
 
   const toggleLayby = (id: number, qty: number, checked: boolean) => {
     setLayby((prev) => ({ ...prev, [id]: checked }));
-    setLaybyQty((prev) => {
-      const next = { ...prev };
-      if (checked) next[id] = qty;
-      else delete next[id];
-      return next;
-    });
-    if (checked) {
+    if (!checked) {
+      setLaybyQty((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+    const backOn = !!backorder[id];
+    if (backOn && qty <= 1) {
       setBackorder((prev) => ({ ...prev, [id]: false }));
       setBackorderQty((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
+      setLaybyQty((prev) => ({ ...prev, [id]: qty }));
+      return;
+    }
+    const back = backOn ? Math.min(qty - 1, backorderQty[id] ?? qty) : 0;
+    if (backOn) setBackorderQty((prev) => ({ ...prev, [id]: back }));
+    setLaybyQty((prev) => ({ ...prev, [id]: qty - back }));
+  };
+
+  // Spinner edits: clamp to what the other flag leaves free, and shrink
+  // the other split if this one grows into it.
+  const setBackSplit = (id: number, qty: number, raw: number) => {
+    const heldOn = !!layby[id];
+    const n = Math.max(1, Math.min(qty - (heldOn ? 1 : 0), raw || 1));
+    setBackorderQty((prev) => ({ ...prev, [id]: n }));
+    if (heldOn) {
+      setLaybyQty((prev) => ({
+        ...prev,
+        [id]: Math.max(1, Math.min(prev[id] ?? qty, qty - n)),
+      }));
+    }
+  };
+  const setHeldSplit = (id: number, qty: number, raw: number) => {
+    const backOn = !!backorder[id];
+    const n = Math.max(1, Math.min(qty - (backOn ? 1 : 0), raw || 1));
+    setLaybyQty((prev) => ({ ...prev, [id]: n }));
+    if (backOn) {
+      setBackorderQty((prev) => ({
+        ...prev,
+        [id]: Math.max(1, Math.min(prev[id] ?? qty, qty - n)),
+      }));
     }
   };
 
@@ -123,9 +169,8 @@ export default function OrderReviewModal({
                 <th className="px-3 py-2 text-center text-gray-300 w-16">Qty</th>
                 <th className="px-3 py-2 text-right text-gray-300 w-24">Unit</th>
                 <th className="px-3 py-2 text-right text-gray-300 w-24">Line Total</th>
-                {/* Column headers double as select-all toggles. Mutually
-                    exclusive: ticking Backorder-all clears Lay By on
-                    every line and vice-versa (mirrors per-row rule). */}
+                {/* Column headers double as select-all toggles. A line
+                    may carry both (split by the spinners). */}
                 <th className="px-3 py-2 text-center text-gray-300 w-44">
                   <div className="flex items-center justify-center gap-1.5">
                     {(() => {
@@ -196,6 +241,22 @@ export default function OrderReviewModal({
                     <td className="px-3 py-2">
                       <p className="font-medium">{item.name}</p>
                       <p className="text-xs text-gray-400 font-mono">{item.sku}</p>
+                      {(isBack || isHeld) && item.quantity > 1 && (() => {
+                        const back = isBack ? (backorderQty[item.productId] ?? item.quantity) : 0;
+                        const held = isHeld
+                          ? Math.min(item.quantity - back, laybyQty[item.productId] ?? item.quantity)
+                          : 0;
+                        const home = item.quantity - back - held;
+                        return (
+                          <p className="text-[11px] mt-0.5 text-gray-400">
+                            {back > 0 && <span className="text-cyan-300">{back} on backorder</span>}
+                            {back > 0 && (held > 0 || home > 0) && ' · '}
+                            {held > 0 && <span className="text-amber-300">{held} held on lay by</span>}
+                            {held > 0 && home > 0 && ' · '}
+                            {home > 0 && <span>{home} taking home today</span>}
+                          </p>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-center">{item.quantity}</td>
                     {/* Discounted lines show the list price struck through
@@ -251,13 +312,7 @@ export default function OrderReviewModal({
                             max={item.quantity}
                             value={backorderQty[item.productId] ?? item.quantity}
                             onChange={(e) =>
-                              setBackorderQty((prev) => ({
-                                ...prev,
-                                [item.productId]: Math.max(
-                                  1,
-                                  Math.min(item.quantity, parseInt(e.target.value) || 1),
-                                ),
-                              }))
+                              setBackSplit(item.productId, item.quantity, parseInt(e.target.value))
                             }
                             className="input w-14 text-center py-0.5 px-1 text-xs"
                           />
@@ -287,13 +342,7 @@ export default function OrderReviewModal({
                             max={item.quantity}
                             value={laybyQty[item.productId] ?? item.quantity}
                             onChange={(e) =>
-                              setLaybyQty((prev) => ({
-                                ...prev,
-                                [item.productId]: Math.max(
-                                  1,
-                                  Math.min(item.quantity, parseInt(e.target.value) || 1),
-                                ),
-                              }))
+                              setHeldSplit(item.productId, item.quantity, parseInt(e.target.value))
                             }
                             className="input w-14 text-center py-0.5 px-1 text-xs"
                           />
