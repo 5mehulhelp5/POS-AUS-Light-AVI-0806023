@@ -612,6 +612,31 @@ export class SyncService {
       }
     }
 
+    // Magento is the source of truth for SKUs. If this Magento product's
+    // SKU now belongs to a DIFFERENT POS row (product renamed in Magento
+    // to a SKU an older row still carries), the save below would trip
+    // the unique SKU index every run — the 35 Havit GU10 errors that
+    // survived the id reconcile. Retire the stale row instead: rename
+    // its SKU out of the way and hide it, keeping its order history and
+    // carrying its cost/barcode across if the live row has none.
+    if (product && magentoProd.sku && product.sku !== magentoProd.sku) {
+      const clash = await this.productRepository.findOne({
+        where: { sku: magentoProd.sku },
+      });
+      if (clash && clash.id !== product.id) {
+        if (product.cost == null && clash.cost != null) product.cost = clash.cost;
+        if (!product.barcode && clash.barcode) product.barcode = clash.barcode;
+        const parked = `${magentoProd.sku.slice(0, 80)}~stale~${clash.id}`;
+        this.logger.warn(
+          `Retiring stale row #${clash.id} (magento_id ${clash.magentoId}, sku ${clash.sku}) — ` +
+            `SKU now belongs to magento_id ${magentoProd.id} (row #${product.id}); parked as ${parked}`,
+        );
+        clash.sku = parked;
+        clash.isActive = false;
+        await this.productRepository.save(clash);
+      }
+    }
+
     const productType = this.mapProductType(magentoProd.type_id);
 
     // Price comes directly from REST API
