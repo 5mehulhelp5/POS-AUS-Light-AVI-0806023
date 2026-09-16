@@ -106,7 +106,10 @@ interface CreateOrderDto {
   // Pickup vs delivery method. Pickup is free; delivery / local_metro /
   // austpost each have a fixed fee set in DELIVERY_FEES. Defaults to
   // pickup when omitted.
-  deliveryType?: 'pickup' | 'delivery' | 'local_metro' | 'austpost';
+  deliveryType?: 'pickup' | 'delivery' | 'local_metro' | 'austpost' | 'custom';
+  // Only honoured when deliveryType is 'custom' — the cashier-entered
+  // fee. Every other type takes its fee from DELIVERY_FEES.
+  deliveryFee?: number;
   // Optional delivery region flag — 'local' vs 'interstate'. Used by
   // the warehouse for dispatch routing; doesn't change the fee.
   deliveryRegion?: 'local' | 'interstate' | null;
@@ -432,13 +435,25 @@ export class OrdersService {
       DeliveryType.DELIVERY,
       DeliveryType.LOCAL_METRO,
       DeliveryType.AUSTPOST,
+      DeliveryType.CUSTOM,
     ]);
     const deliveryType: DeliveryType = validDeliveryTypes.has(
       dto.deliveryType as DeliveryType,
     )
       ? (dto.deliveryType as DeliveryType)
       : DeliveryType.PICKUP;
-    const deliveryFee = DELIVERY_FEES[deliveryType] || 0;
+    let deliveryFee = DELIVERY_FEES[deliveryType] || 0;
+    if (deliveryType === DeliveryType.CUSTOM) {
+      // Custom = whatever the cashier typed (Sally, 16 Sep 2026). Still
+      // validated: a number, not negative, cents-rounded.
+      const raw = Number(dto.deliveryFee);
+      if (!Number.isFinite(raw) || raw < 0) {
+        throw new BadRequestException(
+          'Custom delivery needs a delivery fee amount of $0.00 or more',
+        );
+      }
+      deliveryFee = Math.round(raw * 100) / 100;
+    }
     const grandTotal =
       Math.round((validation.calculatedTotals.grandTotal + deliveryFee) * 100) /
       100;

@@ -37,7 +37,7 @@ interface PaymentModalProps {
 
 type PaymentMethod = 'cash' | 'eftpos' | 'bank_transfer';
 type BuyerType = 'retail' | 'customer';
-type DeliveryType = 'pickup' | 'delivery' | 'local_metro' | 'austpost';
+type DeliveryType = 'pickup' | 'delivery' | 'local_metro' | 'austpost' | 'custom';
 
 // Per-method fees — must match backend DELIVERY_FEES map.
 const DELIVERY_FEES: Record<DeliveryType, number> = {
@@ -45,12 +45,14 @@ const DELIVERY_FEES: Record<DeliveryType, number> = {
   delivery: 60,
   local_metro: 45,
   austpost: 14.95,
+  custom: 0, // real amount typed by the cashier
 };
 const DELIVERY_LABELS: Record<DeliveryType, string> = {
   pickup: 'Pick Up (Free)',
   delivery: 'Delivery ($60)',
   local_metro: 'Local Metro ($45)',
   austpost: 'AustPost ($14.95)',
+  custom: 'Custom — enter delivery fee',
 };
 
 export default function PaymentModal({
@@ -105,6 +107,8 @@ export default function PaymentModal({
     cart.customerIsTrade ? 'retail' : 'customer',
   );
   const [deliveryType, setDeliveryType] = useState<DeliveryType>('pickup');
+  // Cashier-typed fee for the Custom delivery option (Sally, 16 Sep 2026).
+  const [customDeliveryFee, setCustomDeliveryFee] = useState('');
   // Local vs interstate — informational tag for the warehouse. Doesn't
   // change the fee (that's on deliveryType). Persisted in the draft
   // and sent through on the order. Only meaningful when deliveryType
@@ -511,7 +515,17 @@ export default function PaymentModal({
   // Delivery fee is added on top of the cart grand total (`total`
   // prop). Backend recomputes the same way, so the cashier's
   // displayed total and the server total agree.
-  const deliveryFeeApplied = DELIVERY_FEES[deliveryType] || 0;
+  const customFeeParsed = parseFloat(customDeliveryFee);
+  const customFeeValid =
+    customDeliveryFee.trim() !== '' &&
+    Number.isFinite(customFeeParsed) &&
+    customFeeParsed >= 0;
+  const deliveryFeeApplied =
+    deliveryType === 'custom'
+      ? customFeeValid
+        ? Math.round(customFeeParsed * 100) / 100
+        : 0
+      : DELIVERY_FEES[deliveryType] || 0;
   const totalWithDelivery =
     Math.round((total + deliveryFeeApplied) * 100) / 100;
 
@@ -605,6 +619,11 @@ export default function PaymentModal({
         );
         return;
       }
+    }
+
+    if (deliveryType === 'custom' && !customFeeValid) {
+      toast.error('Enter the delivery fee amount for Custom delivery ($0.00 or more)');
+      return;
     }
 
     if (useStoreCredit && !cart.customerId) {
@@ -719,10 +738,10 @@ export default function PaymentModal({
             lastName,
             phone: phoneDigits || undefined,
             email: customerEmail.trim() || undefined,
-            street: customerStreet.trim() || undefined,
-            city: customerCity.trim() || undefined,
-            state: customerState || undefined,
-            postcode: customerPostcode.trim() || undefined,
+            billingStreet: customerStreet.trim() || undefined,
+            billingCity: customerCity.trim() || undefined,
+            billingState: customerState || undefined,
+            billingPostcode: customerPostcode.trim() || undefined,
           });
           customerIdToUse = created.data?.data?.customer?.id || null;
           if (!customerIdToUse) {
@@ -752,6 +771,8 @@ export default function PaymentModal({
           // Pickup is free, delivery adds a flat fee on top — server
           // re-applies it from a constant so the totals can't drift.
           deliveryType,
+          // Only read by the server for 'custom'; other types use its table.
+          deliveryFee: deliveryFeeApplied,
           // Informational region tag (only meaningful when not pickup)
           deliveryRegion:
             deliveryType !== 'pickup' && deliveryRegion
@@ -1306,6 +1327,32 @@ export default function PaymentModal({
               </option>
             ))}
           </select>
+          {deliveryType === 'custom' && (
+            <div className="mt-3">
+              <label className="block text-xs text-gray-400 mb-1">
+                Delivery fee (inc GST)
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  inputMode="decimal"
+                  autoFocus
+                  className="input w-full pl-7"
+                  placeholder="0.00"
+                  value={customDeliveryFee}
+                  onChange={(e) => setCustomDeliveryFee(e.target.value)}
+                />
+              </div>
+              {!customFeeValid && (
+                <p className="text-xs text-amber-300 mt-1">
+                  Type the delivery amount — it's added to the total below.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Local vs interstate — only relevant when the fulfilment
               method is delivery (not pickup). Informational for the

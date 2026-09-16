@@ -109,7 +109,27 @@ export class CustomersService {
     return this.customerRepository.findOne({ where: { id } });
   }
 
+  // The POS payment screen posts the address as street / city / state /
+  // postcode; the columns are billing_*. TypeORM silently dropped the
+  // unknown keys, so lay-by customers auto-created at the till had no
+  // address saved. Fold the short names onto the billing columns.
+  private mapAddressAliases(data: Record<string, unknown>): void {
+    const pairs: Array<[string, string]> = [
+      ['street', 'billingStreet'],
+      ['city', 'billingCity'],
+      ['state', 'billingState'],
+      ['postcode', 'billingPostcode'],
+    ];
+    for (const [alias, column] of pairs) {
+      if (data[alias] !== undefined) {
+        if (data[column] === undefined) data[column] = data[alias];
+        delete data[alias];
+      }
+    }
+  }
+
   async create(data: Partial<Customer>): Promise<Customer> {
+    this.mapAddressAliases(data as Record<string, unknown>);
     this.validateAndNormalise(data);
     const customer = this.customerRepository.create({
       ...data,
@@ -123,6 +143,7 @@ export class CustomersService {
     if (!customer) {
       throw new NotFoundException('Customer not found');
     }
+    this.mapAddressAliases(data as Record<string, unknown>);
     this.validateAndNormalise(data);
     await this.customerRepository.update(id, data);
     return this.findById(id) as Promise<Customer>;

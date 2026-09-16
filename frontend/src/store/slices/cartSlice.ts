@@ -74,7 +74,7 @@ interface CartState {
   // cart sidebar can show a matching total. PaymentModal dispatches
   // setDelivery whenever the cashier flips the dropdown. Cleared on
   // clearCart.
-  deliveryType: 'pickup' | 'delivery' | 'local_metro' | 'austpost';
+  deliveryType: 'pickup' | 'delivery' | 'local_metro' | 'austpost' | 'custom';
   deliveryFee: number;
 }
 

@@ -424,6 +424,10 @@ export default function CustomersPage() {
     company: '',
     taxNumber: '',
     isTrade: false,
+    billingStreet: '',
+    billingCity: '',
+    billingState: '',
+    billingPostcode: '',
     notes: '',
   });
 
@@ -437,6 +441,10 @@ export default function CustomersPage() {
       company: '',
       taxNumber: '',
       isTrade: false,
+      billingStreet: '',
+      billingCity: '',
+      billingState: '',
+      billingPostcode: '',
       notes: '',
     });
   };
@@ -468,6 +476,10 @@ export default function CustomersPage() {
         company: newCustomer.company.trim() || null,
         taxNumber: newCustomer.taxNumber.trim() || null,
         isTrade: newCustomer.isTrade,
+        billingStreet: newCustomer.billingStreet.trim() || null,
+        billingCity: newCustomer.billingCity.trim() || null,
+        billingState: newCustomer.billingState.trim() || null,
+        billingPostcode: newCustomer.billingPostcode.trim() || null,
         notes: newCustomer.notes.trim() || null,
       });
       toast.success('Customer created');
@@ -1747,6 +1759,60 @@ export default function CustomersPage() {
                   value={newCustomer.taxNumber}
                   onChange={(e) => setNewCustomer({ ...newCustomer, taxNumber: e.target.value })}
                 />
+              </div>
+              {/* Address (Sally, 16 Sep 2026: "when creating new customer
+                  please add the address ... for both Trade and Customer").
+                  Same billing fields the Edit Customer form already has. */}
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Street Address</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="123 Main St"
+                  value={newCustomer.billingStreet}
+                  onChange={(e) => setNewCustomer({ ...newCustomer, billingStreet: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">City / Suburb</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={newCustomer.billingCity}
+                  onChange={(e) => setNewCustomer({ ...newCustomer, billingCity: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">State</label>
+                  <select
+                    className="input"
+                    value={newCustomer.billingState}
+                    onChange={(e) => setNewCustomer({ ...newCustomer, billingState: e.target.value })}
+                  >
+                    <option value="">Select</option>
+                    <option value="NSW">NSW</option>
+                    <option value="VIC">VIC</option>
+                    <option value="QLD">QLD</option>
+                    <option value="WA">WA</option>
+                    <option value="SA">SA</option>
+                    <option value="TAS">TAS</option>
+                    <option value="ACT">ACT</option>
+                    <option value="NT">NT</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Postcode</label>
+                  <input
+                    type="text"
+                    className="input"
+                    inputMode="numeric"
+                    maxLength={4}
+                    placeholder="3166"
+                    value={newCustomer.billingPostcode}
+                    onChange={(e) => setNewCustomer({ ...newCustomer, billingPostcode: e.target.value })}
+                  />
+                </div>
               </div>
               <div className="col-span-2">
                 <label className="flex items-center gap-2 text-sm">

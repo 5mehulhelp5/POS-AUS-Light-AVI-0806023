@@ -42,6 +42,10 @@ export enum DeliveryType {
   DELIVERY = 'delivery',
   LOCAL_METRO = 'local_metro',
   AUSTPOST = 'austpost',
+  // Cashier types the fee (Sally, 16 Sep 2026: "a custom option that
+  // allows users to manually enter any delivery fee amount"). The fee
+  // comes from the client for this type only; see orders.service.
+  CUSTOM = 'custom',
 }
 
 // Fee added to the grand total per delivery method. Server reapplies
@@ -52,6 +56,7 @@ export const DELIVERY_FEES: Record<DeliveryType, number> = {
   [DeliveryType.DELIVERY]: 60,
   [DeliveryType.LOCAL_METRO]: 45,
   [DeliveryType.AUSTPOST]: 14.95,
+  [DeliveryType.CUSTOM]: 0, // placeholder — real fee is per-order
 };
 
 // Back-compat re-export so existing imports of DELIVERY_FEE keep working
