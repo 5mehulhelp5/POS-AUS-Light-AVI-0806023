@@ -1,5 +1,11 @@
 import { useRef, CSSProperties } from 'react';
-import { XMarkIcon, PrinterIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import {
+  XMarkIcon,
+  PrinterIcon,
+  ArrowDownTrayIcon,
+  EnvelopeIcon,
+} from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
 import { CartItem } from '../../../store/slices/cartSlice';
 
 // Company block printed at the top + footer of every invoice. Matches the
@@ -160,6 +166,53 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
       .save();
   };
 
+  // Email the invoice (Avi, 16 Sep 2026): reception attaches the PDF
+  // themselves in Outlook, so this saves the PDF to Downloads and opens
+  // the mail client with the customer's address, subject and message
+  // already filled in. A browser can't attach a file to a mailto link,
+  // hence the two-step. No server-side mail is involved.
+  const handleEmail = async () => {
+    try {
+      await handleSavePdf();
+    } catch {
+      toast.error('Could not save the PDF — use Save PDF and attach it manually');
+    }
+    const to = (invoice.customerEmail || '').trim();
+    const customerName = (invoice.customerName || '').trim();
+    const subject = `Invoice #${invoice.orderNumber} — Australian Lighting`;
+    // Sally's template (16 Sep 2026). Amount Due / Due Date follow the
+    // balance: a fully paid sale says so rather than re-billing the
+    // total; a deposit sale shows what's still owing.
+    const owing =
+      typeof invoice.balanceDue === 'number' && invoice.balanceDue > 0.01
+        ? invoice.balanceDue
+        : 0;
+    const amountDue = owing > 0 ? money(owing) : `${money(0)} (paid in full)`;
+    const dueDate = owing > 0 ? 'On collection of goods' : 'Paid in full';
+    const body =
+      `Hi${customerName ? ` ${customerName}` : ''},\n\n` +
+      `Thank you for your business! This email confirms that invoice #${invoice.orderNumber} for ` +
+      `${money(invoice.grandTotal)} has been generated and is attached/available for your records.\n\n` +
+      `Invoice details:\n` +
+      `- Invoice Number: ${invoice.orderNumber}\n` +
+      `- Issue Date: ${formatDate(invoice.date)}\n` +
+      `- Due Date: ${dueDate}\n` +
+      `- Amount Due: ${amountDue}\n\n` +
+      `If you have any questions about this invoice or need any adjustments, simply reply to email ` +
+      `info@australianlighting.com.au or contact us on 03 9548 9200 (option 1)\n\n` +
+      `Thank you for choosing\nAustralian Lighting\n\n` +
+      `1704 Dandenong Rd\nOakleigh East Vic 3166\n03 9548 9200\n`;
+    const href =
+      `mailto:${encodeURIComponent(to)}` +
+      `?subject=${encodeURIComponent(subject)}` +
+      `&body=${encodeURIComponent(body)}`;
+    window.location.href = href;
+    toast(
+      `Invoice-${invoice.orderNumber}.pdf saved to Downloads — attach it to the email that just opened`,
+      { duration: 8000, icon: '📎' },
+    );
+  };
+
   const addr = splitAddress(invoice.customerAddress);
   const showDeposit =
     typeof invoice.balanceDue === 'number' && invoice.balanceDue > 0.01;
@@ -203,6 +256,17 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
             </button>
             <button className="btn-sm bg-green-600 text-white flex items-center gap-2" onClick={handleSavePdf}>
               <ArrowDownTrayIcon className="h-4 w-4" /> Save PDF
+            </button>
+            <button
+              className="btn-sm bg-blue-600 text-white flex items-center gap-2"
+              onClick={handleEmail}
+              title={
+                invoice.customerEmail
+                  ? `Saves the PDF and opens an email to ${invoice.customerEmail}`
+                  : 'Saves the PDF and opens a new email — type the customer address'
+              }
+            >
+              <EnvelopeIcon className="h-4 w-4" /> Email
             </button>
             <button className="text-gray-400 hover:text-pos-text" onClick={onClose}>
               <XMarkIcon className="h-6 w-6" />
