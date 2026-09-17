@@ -125,7 +125,10 @@ export default function PaymentModal({
   const [cashTendered, setCashTendered] = useState('');
   const [eftposRef, setEftposRef] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [demoMode, setDemoMode] = useState(true); // Demo mode enabled by default
+  // OFF by default (Sally, 17 Sep 2026: "we have been putting through
+  // real orders and not being recorded"). Demo mode simulates the
+  // payment and never creates the order, so it must be opt-in per sale.
+  const [demoMode, setDemoMode] = useState(false);
   const [showInvoice, setShowInvoice] = useState(false);
   const [invoiceData, setInvoiceData] = useState<any>(null);
 
