@@ -81,6 +81,20 @@ export const productsApi = {
   // On-the-spot supplier cost correction (manager/admin). null clears it.
   updateCost: (id: number, cost: number | null) =>
     api.patch(`/products/${id}/cost`, { cost }),
+
+  // Per-product trade price (manager/admin). null returns the product to
+  // the trade rules. confirmBelowFloor: admin accepting a price under
+  // the minimum margin.
+  updateTradePrice: (
+    id: number,
+    tradePrice: number | null,
+    confirmBelowFloor = false,
+  ) => api.patch(`/products/${id}/trade-price`, { tradePrice, confirmBelowFloor }),
+
+  // Minimum margin over cost (any staff reads; admin writes).
+  getPricingConfig: () => api.get('/products/pricing-config'),
+  updatePricingConfig: (minMarginPercent: number) =>
+    api.put('/products/pricing-config', { minMarginPercent }),
 };
 
 // Customers API

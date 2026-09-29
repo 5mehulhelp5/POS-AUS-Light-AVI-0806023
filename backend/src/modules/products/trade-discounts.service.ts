@@ -25,6 +25,21 @@ import {
 //     always gets at least their entitled discount.
 const RULES_CACHE_TTL_MS = 60_000;
 
+// Minimum margin over cost, as a percent. Sally, 29 Sep 2026: lowered
+// from 30 to 20 "to cater for low dollar value items such as
+// downlights". Stored in the `min_margin_percent` setting so the next
+// change is a Settings edit, not a deploy.
+export const DEFAULT_MIN_MARGIN_PERCENT = 20;
+export const MIN_MARGIN_SETTING_KEY = 'min_margin_percent';
+
+export function normaliseMarginPercent(raw: unknown): number {
+  const n = Number(raw);
+  if (raw === null || raw === undefined || raw === '' || !Number.isFinite(n)) {
+    return DEFAULT_MIN_MARGIN_PERCENT;
+  }
+  return Math.min(500, Math.max(0, Math.round(n * 100) / 100));
+}
+
 @Injectable()
 export class TradeDiscountsService {
   constructor(
@@ -56,6 +71,35 @@ export class TradeDiscountsService {
     }
     this.rulesCache = { rules, loadedAt: now };
     return rules;
+  }
+
+  private marginCache: { percent: number; loadedAt: number } | null = null;
+
+  async getMinMarginPercent(): Promise<number> {
+    const now = Date.now();
+    if (this.marginCache && now - this.marginCache.loadedAt < RULES_CACHE_TTL_MS) {
+      return this.marginCache.percent;
+    }
+    let percent = DEFAULT_MIN_MARGIN_PERCENT;
+    try {
+      const stored = await this.settingsService.getValue<unknown>(
+        MIN_MARGIN_SETTING_KEY,
+        null,
+      );
+      percent = normaliseMarginPercent(stored);
+    } catch {
+      // keep the default — never fail a sale over a settings read
+    }
+    this.marginCache = { percent, loadedAt: now };
+    return percent;
+  }
+
+  async getMinMarginMultiplier(): Promise<number> {
+    return 1 + (await this.getMinMarginPercent()) / 100;
+  }
+
+  invalidateMarginCache(): void {
+    this.marginCache = null;
   }
 
   // Called after an admin saves new rules so the next priced line picks
@@ -149,8 +193,27 @@ export class TradeDiscountsService {
     // The % applies to the sale-aware effective price instead of the
     // fixed retail RRP (ceiling-fans rule).
     baseOnSpecialPrice: boolean;
+    // Set when the percent was derived from a per-product trade price.
+    fixedPrice?: number | null;
   }> {
     const NONE = { percent: 0, label: null, baseOnSpecialPrice: false };
+
+    // Per-product trade price wins over every rule. It is expressed as
+    // its exact % off the fixed retail price so the whole pricing
+    // pipeline (cart, quotes, orders, customer-price-wins) treats it
+    // like any other trade rate — no second code path to keep in step.
+    // A trade price at or above retail is meaningless; fall through to
+    // the rules in that case (e.g. retail was cut below it in Magento).
+    const fixed = product.tradePrice != null ? Number(product.tradePrice) : null;
+    const rrp = Number(product.price);
+    if (fixed != null && fixed > 0 && rrp > 0 && fixed < rrp) {
+      return {
+        percent: (1 - fixed / rrp) * 100,
+        label: 'Trade price (set for this product)',
+        baseOnSpecialPrice: false,
+        fixedPrice: fixed,
+      };
+    }
     const rules = await this.getRules();
     const productCategoryIds = new Set<number>(
       (product.categories || []).map((c) => c.id),

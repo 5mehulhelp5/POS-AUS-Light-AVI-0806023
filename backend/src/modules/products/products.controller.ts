@@ -20,7 +20,11 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles, RoleNames } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Product } from './entities/product.entity';
-import { TradeDiscountsService } from './trade-discounts.service';
+import {
+  TradeDiscountsService,
+  MIN_MARGIN_SETTING_KEY,
+  normaliseMarginPercent,
+} from './trade-discounts.service';
 import { SettingsService } from '../settings/settings.service';
 import { SettingType } from '../settings/entities/setting.entity';
 import {
@@ -180,6 +184,9 @@ export class ProductsController {
           // guard the backend also enforces on order creation).
           cost:
             canSeeCost && p.cost != null ? parseFloat(p.cost.toString()) : null,
+          // Per-product trade price (null = priced by the trade rules).
+          tradePrice:
+            p.tradePrice != null ? parseFloat(p.tradePrice.toString()) : null,
           brand: p.brand || null,
           stockQty: p.stockQty,
           isInStock: p.isInStock,
@@ -199,6 +206,48 @@ export class ProductsController {
           totalPages: Math.ceil(total / (limit || 20)),
         },
       },
+    };
+  }
+
+  // Pricing config every till needs: the minimum margin over cost.
+  // Readable by any signed-in user (the cart warns with it); only
+  // admins change it. Declared before @Get(':id').
+  @Get('pricing-config')
+  @ApiOperation({ summary: 'Get pricing config (minimum margin percent)' })
+  async getPricingConfig() {
+    return {
+      success: true,
+      data: { minMarginPercent: await this.tradeDiscounts.getMinMarginPercent() },
+    };
+  }
+
+  @Put('pricing-config')
+  @UseGuards(RolesGuard)
+  @Roles(RoleNames.ADMIN)
+  @ApiOperation({ summary: 'Update pricing config (minimum margin percent)' })
+  async updatePricingConfig(
+    @Body() dto: { minMarginPercent?: number | string },
+    @CurrentUser() user: any,
+  ) {
+    const raw = dto?.minMarginPercent;
+    const n = Number(raw);
+    if (raw === undefined || raw === null || raw === '' || !Number.isFinite(n) || n < 0 || n > 500) {
+      throw new BadRequestException('Minimum margin must be a percent between 0 and 500');
+    }
+    const minMarginPercent = normaliseMarginPercent(n);
+    await this.settingsService.set(
+      MIN_MARGIN_SETTING_KEY,
+      minMarginPercent,
+      SettingType.NUMBER,
+      'Minimum margin over cost (percent) enforced at the till',
+      user?.id,
+    );
+    this.tradeDiscounts.invalidateMarginCache();
+    this.logger.log(`Minimum margin set to ${minMarginPercent}% by user #${user?.id ?? '?'}`);
+    return {
+      success: true,
+      message: `Minimum margin is now cost + ${minMarginPercent}%`,
+      data: { minMarginPercent },
     };
   }
 
@@ -271,6 +320,94 @@ export class ProductsController {
       success: true,
       message: cost == null ? 'Cost cleared' : `Cost set to $${cost.toFixed(2)}`,
       data: { id: product.id, sku: product.sku, cost },
+    };
+  }
+
+  // Per-product trade price (Sally, 29 Sep 2026). Replaces the trade
+  // percentage for this one product. Managers and admins can set it;
+  // going under the minimum margin needs an admin, who must confirm.
+  // Send null to clear it and return the product to the trade rules.
+  @Patch(':id/trade-price')
+  @UseGuards(RolesGuard)
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER)
+  @ApiOperation({ summary: 'Set or clear the fixed trade price of a product' })
+  async updateTradePrice(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    dto: { tradePrice?: number | string | null; confirmBelowFloor?: boolean },
+    @CurrentUser() user: any,
+  ) {
+    const before = await this.productsService.findById(id);
+    if (!before) throw new NotFoundException(`Product ${id} not found`);
+
+    let tradePrice: number | null;
+    let belowFloor = false;
+    if (dto?.tradePrice === null || dto?.tradePrice === undefined || dto?.tradePrice === '') {
+      tradePrice = null;
+    } else {
+      const n = Number(dto.tradePrice);
+      if (!Number.isFinite(n) || n <= 0) {
+        throw new BadRequestException('Trade price must be a number above 0');
+      }
+      tradePrice = Math.round(n * 100) / 100;
+      const rrp = Number(before.price);
+      if (tradePrice >= rrp) {
+        throw new BadRequestException(
+          `Trade price must be below the retail price ($${rrp.toFixed(2)})`,
+        );
+      }
+      const cost = before.cost != null ? Number(before.cost) : null;
+      if (cost != null && cost > 0) {
+        const pct = await this.tradeDiscounts.getMinMarginPercent();
+        const floor = Math.round(cost * (1 + pct / 100) * 100) / 100;
+        if (tradePrice < floor - 0.005) {
+          belowFloor = true;
+          const isAdmin = user?.role?.name === RoleNames.ADMIN;
+          const detail =
+            `$${tradePrice.toFixed(2)} is below the minimum margin ` +
+            `(cost $${cost.toFixed(2)} + ${pct}% = $${floor.toFixed(2)}).`;
+          if (!isAdmin) {
+            throw new BadRequestException({
+              success: false,
+              code: 'BELOW_COST_FLOOR',
+              message: `${detail} Only an admin can approve a trade price under the minimum.`,
+              floor,
+            });
+          }
+          if (!dto?.confirmBelowFloor) {
+            throw new BadRequestException({
+              success: false,
+              code: 'BELOW_COST_FLOOR_CONFIRM',
+              message: detail,
+              floor,
+            });
+          }
+        }
+      }
+    }
+
+    const product = await this.productsService.updateTradePrice(id, tradePrice);
+    this.logger.log(
+      `Trade price changed on ${product.sku} (#${id}): ${before.tradePrice ?? 'rule'} -> ` +
+        `${tradePrice ?? 'rule'}${belowFloor ? ' (below margin floor, admin-confirmed)' : ''} ` +
+        `by user #${user?.id ?? '?'}`,
+    );
+    const auto = await this.tradeDiscounts.getAutoDiscount(
+      (await this.productsService.findById(id)) as Product,
+    );
+    return {
+      success: true,
+      message:
+        tradePrice == null
+          ? 'Trade price cleared — back on the trade rules'
+          : `Trade price set to $${tradePrice.toFixed(2)}`,
+      data: {
+        id: product.id,
+        sku: product.sku,
+        tradePrice,
+        belowFloor,
+        percent: auto.percent,
+      },
     };
   }
 
@@ -432,6 +569,10 @@ export class ProductsController {
           cost:
             canSeeCost && product.cost != null
               ? parseFloat(product.cost.toString())
+              : null,
+          tradePrice:
+            product.tradePrice != null
+              ? parseFloat(product.tradePrice.toString())
               : null,
           brand: product.brand || null,
           specialPriceFrom: product.specialPriceFrom,

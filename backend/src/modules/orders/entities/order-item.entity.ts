@@ -38,8 +38,11 @@ export class OrderItem {
   @Column({
     name: 'discount_percent',
     type: 'decimal',
-    precision: 5,
-    scale: 2,
+    // 6 decimals: a fixed trade price is carried as its exact % off
+    // retail (e.g. 21.886970), and 2 decimals would drift a cent or two
+    // when an open order / quote is re-priced from the stored value.
+    precision: 9,
+    scale: 6,
     default: 0,
   })
   discountPercent: number;

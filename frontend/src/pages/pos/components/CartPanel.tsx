@@ -15,6 +15,7 @@ import {
 import toast from 'react-hot-toast';
 import { CartItem, CartDiscount } from '../../../store/slices/cartSlice';
 import { competitorApi, customersApi } from '../../../services/api';
+import { fmtPct } from '../../../utils/pricingConfig';
 
 interface CartPanelProps {
   items: CartItem[];
@@ -37,6 +38,8 @@ interface CartPanelProps {
   // hard-blocks the sale on checkout for sales_staff; managers/admins can
   // still complete it.
   costMap?: Record<number, number>;
+  // Minimum margin over cost, percent (setting; default 20).
+  minMarginPercent?: number;
   onRemoveItem: (productId: number) => void;
   onUpdateQuantity: (productId: number, quantity: number) => void;
   onSetItemDiscount: (productId: number, discountPercent: number) => void;
@@ -63,6 +66,7 @@ export default function CartPanel({
   stockMap = {},
   tradePctMap = {},
   costMap = {},
+  minMarginPercent = 20,
   onRemoveItem,
   onUpdateQuantity,
   onSetItemDiscount,
@@ -433,7 +437,7 @@ export default function CartPanel({
                         return (
                           <span
                             className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40"
-                            title={`Trade price (${pct}% off)`}
+                            title={`Trade price (${fmtPct(pct)}% off)`}
                           >
                             Trade ${tradePrice.toFixed(2)}
                           </span>
@@ -459,7 +463,7 @@ export default function CartPanel({
                                 : ''
                             }
                           >
-                            -{effective}%{isAuto ? ' trade' : ''}
+                            -{fmtPct(effective)}%{isAuto ? ' trade' : ''}
                           </span>
                         );
                       })()}
@@ -596,14 +600,14 @@ export default function CartPanel({
                       {(() => {
                         const cost = costMap[item.productId];
                         if (!cost || cost <= 0) return null;
-                        const floor = cost * 1.3;
+                        const floor = cost * (1 + minMarginPercent / 100);
                         const sellPrice = item.rowTotal / item.quantity;
-                        if (sellPrice >= floor) return null;
+                        if (sellPrice >= floor - 0.005) return null;
                         return (
                           <div className="mt-2 flex items-center gap-1 text-red-400 text-xs">
                             <ExclamationTriangleIcon className="h-4 w-4" />
                             <span>
-                              Below cost price (min ${floor.toFixed(2)} = cost ${cost.toFixed(2)} + 30%)
+                              Below minimum margin (min ${floor.toFixed(2)} = cost ${cost.toFixed(2)} + {fmtPct(minMarginPercent)}%)
                             </span>
                           </div>
                         );

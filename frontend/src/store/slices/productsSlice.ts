@@ -17,9 +17,11 @@ export interface Product {
   // re-checks the date window itself for freshness.
   isOnSale?: boolean;
   effectivePrice?: number;
-  // Wholesale cost from Magento — used by the cart to warn when a trade
-  // discount drops the unit price below cost + 30% (the minimum margin).
+  // Supplier cost (POS-only, manager/admin) — used by the cart to warn
+  // when a price drops below the minimum margin over cost.
   cost?: number | null;
+  // Fixed trade price set on this product; null = priced by trade rules.
+  tradePrice?: number | null;
   // Brand / wholesaler name from Magento's manufacturer attribute (e.g.
   // "Havit"). Shown on the product detail modal so staff know which
   // supplier to reach when they need to reorder.
@@ -238,6 +240,13 @@ const productsSlice = createSlice({
     // Keep the grid's copy in step after a cost edit in the detail modal,
     // so the cart's cost+30% margin guard uses the new figure without a
     // refetch.
+    setProductTradePrice: (
+      state,
+      action: PayloadAction<{ id: number; tradePrice: number | null }>,
+    ) => {
+      const p = state.items.find((x) => x.id === action.payload.id);
+      if (p) p.tradePrice = action.payload.tradePrice;
+    },
     setProductCost: (
       state,
       action: PayloadAction<{ id: number; cost: number | null }>,
@@ -295,6 +304,7 @@ export const {
   navigateToBreadcrumb,
   clearSubcategories,
   setProductCost,
+  setProductTradePrice,
   clearError,
 } = productsSlice.actions;
 

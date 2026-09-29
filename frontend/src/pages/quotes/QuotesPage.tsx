@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { quotesApi, customersApi, productsApi, settingsApi } from '../../services/api';
+import { useMinMarginPercent, fmtPct } from '../../utils/pricingConfig';
 import {
   isProductOnSale,
   effectiveProductPrice,
@@ -57,11 +58,12 @@ interface QuoteLineItem {
   cost?: number | null;
 }
 
-// Minimum margin: an item shouldn't be quoted below cost + 30%.
-const MIN_MARGIN_MULTIPLIER = 1.3;
+// Minimum margin over cost is a setting (see utils/pricingConfig).
 
 export default function QuotesPage() {
   const navigate = useNavigate();
+  const minMarginPct = useMinMarginPercent();
+  const MIN_MARGIN_MULTIPLIER = 1 + minMarginPct / 100;
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 });
   const [isLoading, setIsLoading] = useState(true);
@@ -1530,11 +1532,11 @@ export default function QuotesPage() {
                             const floor = item.cost * MIN_MARGIN_MULTIPLIER;
                             const net =
                               item.price * (1 - effectiveDiscount(item) / 100);
-                            if (net >= floor) return null;
+                            if (net >= floor - 0.005) return null;
                             return (
                               <p className="text-[11px] text-red-400 mt-1 font-semibold">
-                                ⚠ Below cost price — min ${floor.toFixed(2)}{' '}
-                                (cost ${item.cost.toFixed(2)} + 30%)
+                                ⚠ Below minimum margin — min ${floor.toFixed(2)}{' '}
+                                (cost ${item.cost.toFixed(2)} + {fmtPct(minMarginPct)}%)
                               </p>
                             );
                           })()}
@@ -2036,7 +2038,7 @@ export default function QuotesPage() {
                       </td>
                       <td className="text-center py-2">{item.quantity}</td>
                       <td className="text-right py-2">${parseFloat(item.unitPrice).toFixed(2)}</td>
-                      <td className="text-center py-2">{parseFloat(item.discountPercent)}%</td>
+                      <td className="text-center py-2">{fmtPct(parseFloat(item.discountPercent))}%</td>
                       <td className="text-right py-2 font-medium">
                         ${parseFloat(item.rowTotal).toFixed(2)}
                       </td>

@@ -1,3 +1,4 @@
+import { fmtPct } from '../../../utils/pricingConfig';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import {
   isProductOnSale,
@@ -166,7 +167,7 @@ export default function ProductGrid({
                 {tradePrice !== null && (
                   <span
                     className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40"
-                    title={`Trade price (${tradePct}% off)`}
+                    title={`Trade price (${fmtPct(tradePct)}% off)`}
                   >
                     Trade ${tradePrice.toFixed(2)}
                   </span>

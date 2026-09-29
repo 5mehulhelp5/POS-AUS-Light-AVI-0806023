@@ -135,6 +135,20 @@ export class ProductsService {
     return this.productRepository.save(product);
   }
 
+  // Per-product trade price. null puts the product back on the
+  // percentage trade rules.
+  async updateTradePrice(
+    productId: number,
+    tradePrice: number | null,
+  ): Promise<Product> {
+    const product = await this.productRepository.findOne({ where: { id: productId } });
+    if (!product) {
+      throw new NotFoundException(`Product ${productId} not found`);
+    }
+    product.tradePrice = tradePrice;
+    return this.productRepository.save(product);
+  }
+
   async updateStock(productId: number, quantity: number): Promise<void> {
     const product = await this.findById(productId);
     if (!product) {

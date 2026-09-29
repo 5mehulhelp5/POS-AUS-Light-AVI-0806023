@@ -241,7 +241,9 @@ export class DiscountsService {
    * Deliberately omits the cost/floor figures from the returned errors so a
    * sales_staff request can never learn the cost via the response.
    */
-  private static readonly MIN_MARGIN_MULTIPLIER = 1.3;
+  // Fallback only — callers pass the live value from the
+  // `min_margin_percent` setting (20% since 29 Sep 2026).
+  private static readonly MIN_MARGIN_MULTIPLIER = 1.2;
 
   checkCostFloor(
     items: Array<{
@@ -249,8 +251,13 @@ export class DiscountsService {
       name?: string;
       unitPrice: number;
       cost?: number | null;
+      // A per-product trade price an admin/manager has set. Selling a
+      // trade customer at (or above) that price is already approved, so
+      // it isn't blocked even when it sits under the margin floor.
+      approvedPrice?: number | null;
     }>,
     userRole: UserRole,
+    multiplier: number = DiscountsService.MIN_MARGIN_MULTIPLIER,
   ): DiscountError[] {
     if (
       userRole.name === RoleNames.MANAGER ||
@@ -262,8 +269,15 @@ export class DiscountsService {
     const errors: DiscountError[] = [];
     for (const item of items) {
       if (item.cost == null || item.cost <= 0) continue;
-      const floor = item.cost * DiscountsService.MIN_MARGIN_MULTIPLIER;
-      if (item.unitPrice < floor) {
+      const floor = item.cost * multiplier;
+      if (
+        item.approvedPrice != null &&
+        item.approvedPrice > 0 &&
+        item.unitPrice >= item.approvedPrice - 0.005
+      ) {
+        continue;
+      }
+      if (item.unitPrice < floor - 0.005) {
         errors.push({
           code: 'BELOW_COST_FLOOR',
           message: `"${item.name || item.sku}" is priced below the minimum allowed margin — ask a manager or admin to proceed.`,

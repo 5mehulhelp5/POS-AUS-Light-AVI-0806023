@@ -11,6 +11,9 @@ import {
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import { productsApi, competitorApi } from '../../../services/api';
+import { useSelector } from 'react-redux';
+import type { RootState } from '../../../store';
+import { fmtPct } from '../../../utils/pricingConfig';
 import {
   isProductOnSale,
   effectiveProductPrice,
@@ -37,6 +40,9 @@ interface ProductDetailModalProps {
   // Fired after a manager/admin saves a new supplier cost, so the grid's
   // copy (and the cart margin guard) pick up the change.
   onCostUpdated?: (productId: number, cost: number | null) => void;
+  // Fired after a manager/admin sets or clears this product's fixed
+  // trade price, so the grid and cart re-fetch the trade rates.
+  onTradePriceUpdated?: (productId: number, tradePrice: number | null) => void;
   onClose: () => void;
   onAddToCart: (
     product: {
@@ -62,6 +68,7 @@ export default function ProductDetailModal({
   fallbackProduct,
   tradePctMap,
   onCostUpdated,
+  onTradePriceUpdated,
   onClose,
   onAddToCart,
 }: ProductDetailModalProps) {
@@ -79,6 +86,14 @@ export default function ProductDetailModal({
   const [editingCost, setEditingCost] = useState(false);
   const [costInput, setCostInput] = useState('');
   const [costSaving, setCostSaving] = useState(false);
+  // Per-product trade price editor (Sally, 29 Sep 2026). Managers and
+  // admins only; the server enforces the same.
+  const authUser = useSelector((st: RootState) => st.auth.user);
+  const canManagePrices =
+    authUser?.role?.name === 'admin' || authUser?.role?.name === 'manager';
+  const [editingTrade, setEditingTrade] = useState(false);
+  const [tradeInput, setTradeInput] = useState('');
+  const [tradeSaving, setTradeSaving] = useState(false);
 
   const [competitor, setCompetitor] = useState<any>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
@@ -122,6 +137,44 @@ export default function ProductDetailModal({
   }, [tab, competitor, competitorLoading, fallbackProduct.name, fallbackProduct.sku]);
 
   const product = detail?.product || fallbackProduct;
+
+  const saveTradePrice = async (clear: boolean) => {
+    let value: number | null = null;
+    if (!clear) {
+      const n = parseFloat(tradeInput.trim());
+      if (!Number.isFinite(n) || n <= 0) {
+        toast.error('Enter a trade price above 0');
+        return;
+      }
+      value = Math.round(n * 100) / 100;
+    }
+    setTradeSaving(true);
+    try {
+      let r;
+      try {
+        r = await productsApi.updateTradePrice(product.id, value, false);
+      } catch (e: any) {
+        const d = e.response?.data;
+        // Under the minimum margin: an admin may approve it explicitly.
+        if (d?.code !== 'BELOW_COST_FLOOR_CONFIRM') throw e;
+        if (!window.confirm(`${d.message}\n\nSave this trade price anyway?`)) {
+          return;
+        }
+        r = await productsApi.updateTradePrice(product.id, value, true);
+      }
+      const saved = r.data?.data?.tradePrice ?? null;
+      setDetail((d: any) =>
+        d?.product ? { ...d, product: { ...d.product, tradePrice: saved } } : d,
+      );
+      onTradePriceUpdated?.(product.id, saved);
+      toast.success(r.data?.message || 'Trade price updated');
+      setEditingTrade(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to update trade price');
+    } finally {
+      setTradeSaving(false);
+    }
+  };
 
   const startEditCost = () => {
     setCostInput(product.cost != null ? Number(product.cost).toFixed(2) : '');
@@ -251,21 +304,115 @@ export default function ProductDetailModal({
               )}
               {(() => {
                 const pct = tradePctMap?.[product.id] || 0;
-                if (pct <= 0) return null;
+                const rrp = Number(product.price);
+                const fixedTrade =
+                  product.tradePrice != null &&
+                  Number(product.tradePrice) > 0 &&
+                  Number(product.tradePrice) < rrp
+                    ? Number(product.tradePrice)
+                    : null;
                 // Trade base is always the fixed retail (product.price)
                 // so trade never stacks on top of an active SALE price.
+                // A price set on the product wins over the % rules.
                 const tradePrice =
-                  Math.round(Number(product.price) * (1 - pct / 100) * 100) / 100;
+                  fixedTrade != null
+                    ? fixedTrade
+                    : pct > 0
+                      ? Math.round(rrp * (1 - pct / 100) * 100) / 100
+                      : null;
                 // Customer-price-wins: a deep sale below the trade rate
                 // means trade pays the sale price — hide the dearer badge.
-                if (effectiveProductPrice(product) <= tradePrice) return null;
+                const beatenBySale =
+                  tradePrice != null && effectiveProductPrice(product) <= tradePrice;
+
+                if (editingTrade) {
+                  return (
+                    <span className="inline-flex items-center gap-1 flex-wrap">
+                      <span className="text-xs text-yellow-300">Trade $</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        autoFocus
+                        className="input w-28 py-0.5 text-sm"
+                        value={tradeInput}
+                        placeholder="inc GST"
+                        disabled={tradeSaving}
+                        onChange={(e) => setTradeInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveTradePrice(false);
+                          if (e.key === 'Escape') setEditingTrade(false);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary py-0.5 px-2 text-xs"
+                        disabled={tradeSaving}
+                        onClick={() => saveTradePrice(false)}
+                      >
+                        {tradeSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      {fixedTrade != null && (
+                        <button
+                          type="button"
+                          className="btn-secondary py-0.5 px-2 text-xs"
+                          disabled={tradeSaving}
+                          title="Remove the set price and go back to the trade % rules"
+                          onClick={() => saveTradePrice(true)}
+                        >
+                          Use rule
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-secondary py-0.5 px-2 text-xs"
+                        disabled={tradeSaving}
+                        onClick={() => setEditingTrade(false)}
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  );
+                }
+
+                const openEditor = () => {
+                  setTradeInput(tradePrice != null ? tradePrice.toFixed(2) : '');
+                  setEditingTrade(true);
+                };
+                const label =
+                  tradePrice == null
+                    ? null
+                    : `Trade $${tradePrice.toFixed(2)}`;
+                const title =
+                  fixedTrade != null
+                    ? 'Trade price set for this product'
+                    : `Trade price (${fmtPct(pct)}% off)`;
+                const badge =
+                  'text-xs font-bold px-2 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40';
+
+                if (!canManagePrices) {
+                  if (label == null || beatenBySale) return null;
+                  return (
+                    <span className={badge} title={title}>
+                      {label}
+                    </span>
+                  );
+                }
                 return (
-                  <span
-                    className="text-xs font-bold px-2 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40"
-                    title={`Trade price (${pct}% off)`}
+                  <button
+                    type="button"
+                    className={`${badge} inline-flex items-center gap-1 hover:border-yellow-300`}
+                    title={`${label == null ? 'No trade price' : title} — click to change`}
+                    onClick={openEditor}
                   >
-                    Trade ${tradePrice.toFixed(2)}
-                  </span>
+                    {label == null
+                      ? 'Set trade price'
+                      : beatenBySale
+                        ? `${label} (sale price is lower)`
+                        : label}
+                    {fixedTrade != null && <span className="font-normal opacity-80">· set</span>}
+                    <PencilSquareIcon className="h-3.5 w-3.5" />
+                  </button>
                 );
               })()}
               {/* Cost — only present when the API returned it (manager/admin

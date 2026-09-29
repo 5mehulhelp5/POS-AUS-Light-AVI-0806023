@@ -63,6 +63,19 @@ export class Product {
   @Column({ type: 'decimal', precision: 12, scale: 4, nullable: true })
   cost: number | null;
 
+  // Fixed trade price for this product (Sally, 29 Sep 2026: "implement
+  // the proper per-product trade price"). When set, it replaces the
+  // percentage trade rules for this product only. POS-only — the
+  // Magento sync never reads or writes it.
+  @Column({
+    name: 'trade_price',
+    type: 'decimal',
+    precision: 12,
+    scale: 4,
+    nullable: true,
+  })
+  tradePrice: number | null;
+
   @Column({ type: 'decimal', precision: 10, scale: 4, nullable: true })
   weight: number | null;
 

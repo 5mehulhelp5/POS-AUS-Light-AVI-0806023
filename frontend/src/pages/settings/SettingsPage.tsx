@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { settingsApi, syncApi, productsApi } from '../../services/api';
 import type { AutoSyncConfig, AutoSyncState } from '../../services/api';
+import { setCachedMinMarginPercent } from '../../utils/pricingConfig';
 import {
   BuildingStorefrontIcon,
   CreditCardIcon,
@@ -110,6 +111,10 @@ export default function SettingsPage() {
   // saved rule-set can be restored to the shipped configuration.
   const [tradeRules, setTradeRules] = useState<TradeRule[]>([]);
   const [tradeRuleDefaults, setTradeRuleDefaults] = useState<TradeRule[]>([]);
+  // Minimum margin over cost (Sally, 29 Sep 2026: 30% -> 20%).
+  const [minMarginInput, setMinMarginInput] = useState('20');
+  const [minMarginSaving, setMinMarginSaving] = useState(false);
+  const [minMarginMsg, setMinMarginMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Sync state
   const [syncStatus, setSyncStatus] = useState<{
@@ -190,6 +195,12 @@ export default function SettingsPage() {
           const tradeRes = await productsApi.getTradeRules();
           setTradeRules(tradeRes.data.data.rules || []);
           setTradeRuleDefaults(tradeRes.data.data.defaults || []);
+          try {
+            const cfg = await productsApi.getPricingConfig();
+            setMinMarginInput(String(cfg.data?.data?.minMarginPercent ?? 20));
+          } catch {
+            // older backend — leave the default in the box
+          }
           break;
         case 'sync':
           const statusRes = await syncApi.getStatus();
@@ -302,6 +313,30 @@ export default function SettingsPage() {
     const iv = setInterval(tick, 3000);
     return () => clearInterval(iv);
   }, [activeTab]);
+
+  const handleSaveMinMargin = async () => {
+    const n = parseFloat(minMarginInput);
+    if (!Number.isFinite(n) || n < 0 || n > 500) {
+      setMinMarginMsg({ ok: false, text: 'Enter a percent between 0 and 500' });
+      return;
+    }
+    setMinMarginSaving(true);
+    setMinMarginMsg(null);
+    try {
+      const r = await productsApi.updatePricingConfig(n);
+      const saved = Number(r.data?.data?.minMarginPercent ?? n);
+      setMinMarginInput(String(saved));
+      setCachedMinMarginPercent(saved);
+      setMinMarginMsg({ ok: true, text: r.data?.message || 'Saved' });
+    } catch (e: any) {
+      setMinMarginMsg({
+        ok: false,
+        text: e.response?.data?.message || 'Failed to save the minimum margin',
+      });
+    } finally {
+      setMinMarginSaving(false);
+    }
+  };
 
   const handleSaveAutoSync = async () => {
     setAutoSyncSaving(true);
@@ -884,6 +919,46 @@ export default function SettingsPage() {
           {/* Trade auto-discount rules */}
           {activeTab === 'trade' && (
             <div className="space-y-6">
+              {/* Minimum margin over cost — applies to every sale. */}
+              <div className="card p-6">
+                <h2 className="text-lg font-semibold mb-1">Minimum Margin</h2>
+                <p className="text-sm text-gray-400 mb-4">
+                  The lowest price an item can sell for is its cost plus this
+                  percentage. Sales staff are blocked below it; managers and
+                  admins see a warning. A trade price set on a product is
+                  treated as approved, even if it sits under this minimum.
+                </p>
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Cost +</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min={0}
+                        max={500}
+                        step="0.5"
+                        className="input w-32 pr-8"
+                        value={minMarginInput}
+                        onChange={(e) => setMinMarginInput(e.target.value)}
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+                    </div>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={handleSaveMinMargin}
+                    disabled={minMarginSaving}
+                  >
+                    {minMarginSaving ? 'Saving…' : 'Save Minimum Margin'}
+                  </button>
+                  {minMarginMsg && (
+                    <span className={`text-sm ${minMarginMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+                      {minMarginMsg.text}
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <div className="card p-6">
                 <h2 className="text-lg font-semibold mb-1">
                   Trade Auto-Discount Rules

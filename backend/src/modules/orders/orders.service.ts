@@ -304,6 +304,12 @@ export class OrdersService {
           // Clearance items are excluded from the cart-level discount.
           isSaleItem: product.isOnSale,
           cost: product.cost != null ? Number(product.cost) : null,
+          // Set trade price for this product, when selling to trade —
+          // exempts the line from the margin floor at that price.
+          approvedPrice:
+            isTradeOrder && product.tradePrice != null
+              ? Number(product.tradePrice)
+              : null,
         };
       }),
     );
@@ -312,14 +318,17 @@ export class OrdersService {
     // (list price net of the effective discount) can't undercut cost+30%.
     // Managers/admins may override; sales_staff cannot. Checked against
     // the final per-unit sell price, not the pre-discount unitPrice.
+    const minMarginMultiplier = await this.tradeDiscounts.getMinMarginMultiplier();
     const costFloorErrors = this.discountsService.checkCostFloor(
       cartItems.map((c) => ({
         sku: c.sku,
         name: c.name,
         unitPrice: c.unitPrice * (1 - c.discountPercent / 100),
         cost: c.cost,
+        approvedPrice: (c as { approvedPrice?: number | null }).approvedPrice ?? null,
       })),
       userRole,
+      minMarginMultiplier,
     );
     if (costFloorErrors.length > 0) {
       throw new BadRequestException({
@@ -1219,6 +1228,7 @@ export class OrdersService {
         let unitPrice: number;
         let productId: number | null = null;
         let cost: number | null = null;
+        let approvedPrice: number | null = null;
 
         if (item.isCustom || item.productId <= 0) {
           const p = Number(item.unitPrice);
@@ -1239,6 +1249,11 @@ export class OrdersService {
           name = product.name;
           productId = product.id;
           cost = product.cost != null ? Number(product.cost) : null;
+          approvedPrice =
+            (order as { customer?: { isTrade?: boolean } | null }).customer?.isTrade &&
+            product.tradePrice != null
+              ? Number(product.tradePrice)
+              : null;
           const base = product.isOnSale
             ? Number(product.specialPrice)
             : Number(product.price);
@@ -1253,8 +1268,17 @@ export class OrdersService {
         const discountPct = Math.max(0, Math.min(100, item.discountPercent || 0));
 
         const floorErrors = this.discountsService.checkCostFloor(
-          [{ sku, name, unitPrice: unitPrice * (1 - discountPct / 100), cost }],
+          [
+            {
+              sku,
+              name,
+              unitPrice: unitPrice * (1 - discountPct / 100),
+              cost,
+              approvedPrice,
+            },
+          ],
           userRole,
+          await this.tradeDiscounts.getMinMarginMultiplier(),
         );
         if (floorErrors.length > 0) {
           throw new BadRequestException({

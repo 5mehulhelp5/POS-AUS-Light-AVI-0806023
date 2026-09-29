@@ -14,8 +14,10 @@ import {
   isProductOnSale,
   effectiveProductPrice,
   setProductCost,
+  setProductTradePrice,
 } from '../../store/slices/productsSlice';
 import { productsApi, quotesApi } from '../../services/api';
+import { useMinMarginPercent, fmtPct } from '../../utils/pricingConfig';
 import {
   addItem,
   removeItem,
@@ -148,6 +150,10 @@ export default function POSPage() {
   // Trade auto-discount % per visible product, used to show a yellow
   // "Trade $X" tag beside the retail price on each grid card.
   const [tradePctMap, setTradePctMap] = useState<Record<number, number>>({});
+  // Bumped when a product's trade price is edited, to re-fetch the rates.
+  const [tradeRefreshKey, setTradeRefreshKey] = useState(0);
+  // Minimum margin over cost — a setting (20% since 29 Sep 2026).
+  const minMarginPct = useMinMarginPercent();
 
   // "Last Invoice" quick re-print — pulls the most recently created
   // order and opens its printable invoice without leaving the POS.
@@ -378,7 +384,7 @@ export default function POSPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gridProductIdsKey, cartProductIdsKey]);
+  }, [gridProductIdsKey, cartProductIdsKey, tradeRefreshKey]);
 
   // Trade auto-discount: when the cart is for a trade-flagged customer
   // and the set of productIds changes, fetch the per-line auto rate
@@ -409,7 +415,7 @@ export default function POSPage() {
     return () => {
       cancelled = true;
     };
-  }, [cart.customerIsTrade, cartProductIdsKey, dispatch]);
+  }, [cart.customerIsTrade, cartProductIdsKey, dispatch, tradeRefreshKey]);
 
   const handleCategorySelect = (cat: { id: number; name: string }) => {
     setActiveCategoryId(cat.id);
@@ -943,6 +949,7 @@ export default function POSPage() {
         canStackDiscounts={canStackDiscounts}
         stockMap={{}}
         costMap={costMap}
+        minMarginPercent={minMarginPct}
         onRemoveItem={(productId) => dispatch(removeItem(productId))}
         onUpdateQuantity={(productId, qty) =>
           dispatch(updateQuantity({ productId, quantity: qty }))
@@ -957,13 +964,14 @@ export default function POSPage() {
           // from sales staff by the API) — staff are still hard-blocked
           // server-side at order creation.
           const cost = costMap[productId];
-          if (cost != null && cost > 0 && unitPrice < cost * 1.3) {
+          const floor = cost != null ? cost * (1 + minMarginPct / 100) : 0;
+          if (cost != null && cost > 0 && unitPrice < floor - 0.005) {
             // No override for anyone (Sally, 9 Sep: "take away the
             // option to set anyway — see the message, hit Cancel and
             // adjust the price"). Managers/admins included.
             toast.error(
               `$${unitPrice.toFixed(2)} is below the minimum margin ` +
-                `(cost + 30% = $${(cost * 1.3).toFixed(2)}) — adjust the price`,
+                `(cost + ${fmtPct(minMarginPct)}% = $${floor.toFixed(2)}) — adjust the price`,
             );
             return;
           }
@@ -1038,6 +1046,10 @@ export default function POSPage() {
           fallbackProduct={detailProduct}
           tradePctMap={tradePctMap}
           onCostUpdated={(id, cost) => dispatch(setProductCost({ id, cost }))}
+          onTradePriceUpdated={(id, tradePrice) => {
+            dispatch(setProductTradePrice({ id, tradePrice }));
+            setTradeRefreshKey((k) => k + 1);
+          }}
           onClose={() => setDetailProduct(null)}
           onAddToCart={(p, q) => handleAddToCart(p, q)}
         />
