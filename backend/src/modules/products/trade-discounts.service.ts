@@ -272,12 +272,49 @@ export class TradeDiscountsService {
         return NONE;
       }
 
-      return {
+      return this.applyMarginFloor(product, {
         percent: rule.percent,
         label: rule.label,
         baseOnSpecialPrice: rule.baseOnSpecialPrice === true,
-      };
+      });
     }
     return NONE;
+  }
+
+  // The trade rate never takes a product under the minimum margin
+  // (Sally, 1 Oct 2026: Stargem $66 retail, 20% trade = $52.80, cost
+  // $46.60 + 20% = $55.92, "we are making a loss ... if the Margin Rule
+  // price is higher than the Trade price, display the Margin Rule as the
+  // Trade Price"). So: trade price = max(rule price, cost + margin%).
+  // If even the retail price is under the floor, trade gets no discount
+  // at all. Only applies when the POS knows the cost. A trade price set
+  // on the product itself is admin-approved and skips this (see above).
+  private async applyMarginFloor(
+    product: Product,
+    auto: { percent: number; label: string | null; baseOnSpecialPrice: boolean },
+  ): Promise<{ percent: number; label: string | null; baseOnSpecialPrice: boolean; fixedPrice?: number | null }> {
+    const cost = product.cost != null ? Number(product.cost) : null;
+    if (!cost || cost <= 0 || auto.percent <= 0) return auto;
+    const marginPct = await this.getMinMarginPercent();
+    const floor = cost * (1 + marginPct / 100);
+    const base = auto.baseOnSpecialPrice
+      ? Number(product.effectivePrice)
+      : Number(product.price);
+    if (!(base > 0)) return auto;
+    const tradeNet = base * (1 - auto.percent / 100);
+    if (tradeNet >= floor - 0.005) return auto;
+    if (floor >= base - 0.005) {
+      return {
+        percent: 0,
+        label: `${auto.label || 'Trade'} — no trade discount, retail is already at the minimum margin`,
+        baseOnSpecialPrice: auto.baseOnSpecialPrice,
+      };
+    }
+    const flooredPrice = Math.round(floor * 100) / 100;
+    return {
+      percent: (1 - flooredPrice / base) * 100,
+      label: `${auto.label || 'Trade'} — limited to cost + ${marginPct}%`,
+      baseOnSpecialPrice: auto.baseOnSpecialPrice,
+    };
   }
 }

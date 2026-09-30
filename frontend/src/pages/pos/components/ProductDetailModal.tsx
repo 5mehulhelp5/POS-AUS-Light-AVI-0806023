@@ -14,6 +14,7 @@ import { productsApi, competitorApi } from '../../../services/api';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../../store';
 import { fmtPct } from '../../../utils/pricingConfig';
+import { posImage } from '../../../utils/imageUrl';
 import {
   isProductOnSale,
   effectiveProductPrice,
@@ -428,6 +429,20 @@ export default function ProductDetailModal({
                   <PencilSquareIcon className="h-3.5 w-3.5" />
                 </button>
               )}
+              {/* No cost loaded for this product (about a third of the
+                  range, Sally 1 Oct 2026) — let managers/admins add one
+                  here instead of waiting for the next price-list import. */}
+              {product.cost == null && canManagePrices && !editingCost && (
+                <button
+                  type="button"
+                  className="text-xs font-bold px-2 py-0.5 rounded bg-gray-600/20 text-gray-400 border border-dashed border-gray-500/60 inline-flex items-center gap-1 hover:border-primary-400 hover:text-primary-300"
+                  title="No cost price loaded for this product — click to enter one (inc GST)"
+                  onClick={startEditCost}
+                >
+                  Set cost
+                  <PencilSquareIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
               {editingCost && (
                 <span className="inline-flex items-center gap-1">
                   <span className="text-xs text-gray-400">Cost $</span>
@@ -484,7 +499,7 @@ export default function ProductDetailModal({
             <div className="relative flex-1 min-h-[260px] bg-pos-dark rounded-lg overflow-hidden flex items-center justify-center">
               {gallery.length > 0 ? (
                 <img
-                  src={gallery[galleryIdx]}
+                  src={posImage(gallery[galleryIdx]) || undefined}
                   alt={product.name}
                   className="max-h-[340px] w-auto object-contain"
                   onError={(e) => {

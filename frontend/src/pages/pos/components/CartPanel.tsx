@@ -16,6 +16,7 @@ import toast from 'react-hot-toast';
 import { CartItem, CartDiscount } from '../../../store/slices/cartSlice';
 import { competitorApi, customersApi } from '../../../services/api';
 import { fmtPct } from '../../../utils/pricingConfig';
+import { posImage } from '../../../utils/imageUrl';
 
 interface CartPanelProps {
   items: CartItem[];
@@ -314,7 +315,7 @@ export default function CartPanel({
                   <div className="w-12 h-12 bg-pos-accent rounded overflow-hidden flex-shrink-0">
                     {item.imageUrl ? (
                       <img
-                        src={item.imageUrl}
+                        src={posImage(item.imageUrl) || undefined}
                         alt={item.name}
                         className="w-full h-full object-cover"
                         loading="lazy"

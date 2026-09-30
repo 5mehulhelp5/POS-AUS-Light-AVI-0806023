@@ -1,3 +1,4 @@
+import { posImage } from '../../../utils/imageUrl';
 import { fmtPct } from '../../../utils/pricingConfig';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import {
@@ -87,7 +88,7 @@ export default function ProductGrid({
             <div className="h-28 bg-pos-accent rounded-lg mb-2 overflow-hidden relative">
               {product.thumbnailUrl ? (
                 <img
-                  src={product.thumbnailUrl}
+                  src={posImage(product.thumbnailUrl) || undefined}
                   alt={product.name}
                   className="w-full h-full object-contain p-1"
                   loading="lazy"
