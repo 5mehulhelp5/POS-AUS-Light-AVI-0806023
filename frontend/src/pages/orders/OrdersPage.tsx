@@ -18,6 +18,7 @@ import {
   ArrowLeftIcon,
   BanknotesIcon,
   CheckCircleIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
 
 interface Order {
@@ -30,7 +31,8 @@ interface Order {
   user: { id: number; firstName: string; lastName: string };
   itemCount: number;
   createdAt: string;
-  source?: 'pos' | 'magento';
+  source?: 'pos' | 'magento' | 'legacy';
+  legacyFile?: string | null;
   orderType?: 'standard' | 'layby';
   laybyExpiresAt?: string | null;
   hasBackorderItems?: boolean;
@@ -54,6 +56,7 @@ type FilterOption =
   | 'all'
   | 'pos'
   | 'magento'
+  | 'legacy'
   | 'layby'
   | 'complete'
   | 'pending'
@@ -68,6 +71,7 @@ const FILTER_OPTIONS: { value: FilterOption; label: string }[] = [
   { value: 'all', label: 'All Orders' },
   { value: 'pos', label: 'POS Orders' },
   { value: 'magento', label: 'Magento Orders' },
+  { value: 'legacy', label: 'Old Invoices (imported)' },
   { value: 'layby', label: 'Lay Bys (all)' },
   { value: 'layby_active', label: 'Lay By — Active' },
   { value: 'layby_expired', label: 'Lay By — Expired' },
@@ -243,7 +247,7 @@ export default function OrdersPage() {
         page: pagination.page,
         limit: 20,
       };
-      if (filter === 'pos' || filter === 'magento') {
+      if (filter === 'pos' || filter === 'magento' || filter === 'legacy') {
         params.source = filter;
       } else if (filter === 'layby') {
         params.type = 'layby';
@@ -842,10 +846,13 @@ export default function OrdersPage() {
                         className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
                           order.source === 'magento'
                             ? 'bg-purple-600/30 text-purple-300'
-                            : 'bg-blue-600/30 text-blue-300'
+                            : order.source === 'legacy'
+                              ? 'bg-gray-500/30 text-gray-300'
+                              : 'bg-blue-600/30 text-blue-300'
                         }`}
+                        title={order.source === 'legacy' ? 'Imported from the old invoice system' : undefined}
                       >
-                        {order.source === 'magento' ? 'M2' : 'POS'}
+                        {order.source === 'magento' ? 'M2' : order.source === 'legacy' ? 'OLD' : 'POS'}
                       </span>
                       {order.source === 'pos' && order.syncStatus === 'synced' && (
                         <span
@@ -1100,6 +1107,33 @@ export default function OrdersPage() {
                   >
                     <PrinterIcon className="h-4 w-4" /> Print Invoice
                   </button>
+                  {/* Orders imported from the old Excel system keep the
+                      exact invoice the customer received. */}
+                  {selectedOrder.legacyFile && (
+                    <button
+                      className="btn-secondary flex items-center gap-1 text-xs py-1"
+                      title="Download the original invoice exactly as it was issued (Excel)"
+                      onClick={async () => {
+                        try {
+                          const r = await ordersApi.getOriginalInvoice(selectedOrder.id);
+                          const url = URL.createObjectURL(r.data);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${selectedOrder.orderNumber}-original${
+                            String(selectedOrder.legacyFile).toLowerCase().endsWith('.xls') ? '.xls' : '.xlsx'
+                          }`;
+                          document.body.appendChild(a);
+                          a.click();
+                          a.remove();
+                          setTimeout(() => URL.revokeObjectURL(url), 10000);
+                        } catch {
+                          toast.error('Original invoice file is not available');
+                        }
+                      }}
+                    >
+                      <ArrowDownTrayIcon className="h-4 w-4" /> Original Invoice
+                    </button>
+                  )}
                 </div>
                 <h3 className="text-lg font-semibold">
                   {canTakePayment(selectedOrder)

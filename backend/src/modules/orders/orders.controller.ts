@@ -9,7 +9,12 @@ import {
   Query,
   UseGuards,
   ParseIntPipe,
+  NotFoundException,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { RefundsService, CreateRefundDto } from './refunds.service';
@@ -93,6 +98,7 @@ export class OrdersController {
           itemCount: o.items.length,
           createdAt: o.createdAt,
           source: o.source,
+          legacyFile: o.legacyFile || null,
           orderType: o.orderType,
           laybyExpiresAt: o.laybyExpiresAt,
           hasBackorderItems: o.items.some((i) => i.isBackorder),
@@ -116,6 +122,37 @@ export class OrdersController {
         },
       },
     };
+  }
+
+  // The exact invoice the customer received, for orders imported from
+  // the old Excel system. Files live outside the web root; the name is
+  // taken from the order row, never from the request, so nothing else
+  // on the disk is reachable.
+  @Get(':id/original-invoice')
+  @ApiOperation({ summary: 'Download the original legacy invoice file for an imported order' })
+  async originalInvoice(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
+    const order = await this.ordersService.findById(id);
+    if (!order || !order.legacyFile) {
+      throw new NotFoundException('This order has no original invoice file');
+    }
+    const dir = process.env.LEGACY_INVOICES_DIR || '/opt/pos-aus-light/legacy-invoices';
+    const file = path.join(dir, path.basename(order.legacyFile));
+    if (!fs.existsSync(file)) {
+      throw new NotFoundException('Original invoice file is missing on the server');
+    }
+    const ext = path.extname(file).toLowerCase();
+    const type =
+      ext === '.xls'
+        ? 'application/vnd.ms-excel'
+        : ext === '.xlsm'
+          ? 'application/vnd.ms-excel.sheet.macroEnabled.12'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    res.setHeader('Content-Type', type);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${order.orderNumber}-original${ext}"`,
+    );
+    fs.createReadStream(file).pipe(res);
   }
 
   @Get(':id')

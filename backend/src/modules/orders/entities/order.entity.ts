@@ -79,6 +79,9 @@ export enum OrderSyncStatus {
 export enum OrderSource {
   POS = 'pos',
   MAGENTO = 'magento',
+  // Imported from the pre-POS Excel invoices (Oct 2026). Never pushed to
+  // Magento; carries legacyFile so the original can be opened.
+  LEGACY = 'legacy',
 }
 
 @Entity('orders')
@@ -265,6 +268,11 @@ export class Order {
   deliveryRegion: string | null;
 
   @Index()
+  // File name of the original Excel invoice for orders imported from the
+  // old system (source = legacy). Served by GET /orders/:id/original-invoice.
+  @Column({ name: 'legacy_file', type: 'varchar', length: 255, nullable: true })
+  legacyFile: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

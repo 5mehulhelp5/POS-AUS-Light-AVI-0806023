@@ -139,6 +139,9 @@ export const ordersApi = {
   }) => api.get('/orders', { params }),
 
   getOrder: (id: number) => api.get(`/orders/${id}`),
+  // Original Excel invoice for orders imported from the old system.
+  getOriginalInvoice: (id: number) =>
+    api.get(`/orders/${id}/original-invoice`, { responseType: 'blob' }),
   // Per-line status from the order screen (backorder / layby / paid).
   setItemStatus: (id: number, itemId: number, status: 'backorder' | 'layby' | 'paid') =>
     api.patch(`/orders/${id}/items/${itemId}/status`, { status }),
