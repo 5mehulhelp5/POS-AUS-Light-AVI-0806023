@@ -146,8 +146,9 @@ async function main() {
   console.log(`connected to ${process.env.DB_DATABASE}@${process.env.DB_HOST}${dryRun ? '  [DRY RUN — nothing will be written]' : ''}`);
 
   // ---- lookups: existing orders, customers, system user
+  // Lower-cased: the order_number unique index is case-insensitive.
   const existing = new Set<string>(
-    (await ds.query(`SELECT order_number FROM orders WHERE source = 'legacy' OR order_number LIKE 'L-%' OR order_number LIKE 'LF-%'`)).map((r: any) => r.order_number),
+    (await ds.query(`SELECT order_number FROM orders WHERE source = 'legacy' OR order_number LIKE 'L-%' OR order_number LIKE 'LF-%'`)).map((r: any) => String(r.order_number).toLowerCase()),
   );
   const byPhone = new Map<string, number>();
   const byEmail = new Map<string, number>();
@@ -203,7 +204,8 @@ async function main() {
     stats.read++;
     if (limit && stats.read > limit) break;
     const doc: Doc = JSON.parse(line);
-    if (existing.has(doc.order_number)) { stats.skipped_existing++; continue; }
+    if (existing.has(doc.order_number.toLowerCase())) { stats.skipped_existing++; continue; }
+    existing.add(doc.order_number.toLowerCase());
     pending.push(doc);
     if (pending.length >= CHUNK) { await flush(pending); pending = []; }
   }
