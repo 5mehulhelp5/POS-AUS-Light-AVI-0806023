@@ -697,20 +697,28 @@ export class MagentoService {
 
   async fetchProductBySku(sku: string): Promise<MagentoProduct> {
     const token = await this.getAdminToken();
-    // Magento URL-decodes the path segment once before routing, so SKUs
-    // containing slashes (e.g. "22780/05") need double encoding — a plain
-    // %2F turns back into "/" and Magento then sees two path segments and
-    // returns 404. encodeURIComponent twice produces %252F which survives.
-    const safeSku = encodeURIComponent(encodeURIComponent(sku));
+    // SKUs with slashes ("SES7070/1TC/BK") can't go in the URL path: the
+    // Cloudways web server rejects encoded slashes with a bare 404 before
+    // Magento ever sees them (Cloudflare used to smooth this over). The
+    // search endpoint takes the SKU as a query parameter instead, with an
+    // exact match, and returns the same product representation.
+    const query =
+      '/rest/V1/products?searchCriteria[filter_groups][0][filters][0][field]=sku' +
+      `&searchCriteria[filter_groups][0][filters][0][value]=${encodeURIComponent(sku)}` +
+      '&searchCriteria[filter_groups][0][filters][0][condition_type]=eq' +
+      '&searchCriteria[pageSize]=1';
     try {
-      const response = await this.httpClient.get(
-        `/rest/V1/products/${safeSku}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 30000,
-        },
-      );
-      return response.data;
+      const response = await this.httpClient.get(query, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 30000,
+      });
+      const item = (response.data?.items || []).find(
+        (p: MagentoProduct) => String(p.sku).toLowerCase() === sku.toLowerCase(),
+      ) || response.data?.items?.[0];
+      if (!item) {
+        throw new Error(`Magento has no product with SKU ${sku}`);
+      }
+      return item;
     } catch (error) {
       this.logger.error(`Failed to fetch product ${sku} from Magento`, error);
       throw error;

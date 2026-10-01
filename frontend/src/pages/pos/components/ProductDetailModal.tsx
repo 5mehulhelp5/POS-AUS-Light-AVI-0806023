@@ -547,7 +547,7 @@ export default function ProductDetailModal({
                       i === galleryIdx ? 'border-primary-500' : 'border-gray-700'
                     }`}
                   >
-                    <img src={url} alt="" className="w-full h-full object-contain" />
+                    <img src={posImage(url) || undefined} alt="" className="w-full h-full object-contain" />
                   </button>
                 ))}
               </div>

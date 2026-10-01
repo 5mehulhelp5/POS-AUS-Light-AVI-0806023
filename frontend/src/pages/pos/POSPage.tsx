@@ -1045,7 +1045,12 @@ export default function POSPage() {
           productId={detailProduct.id}
           fallbackProduct={detailProduct}
           tradePctMap={tradePctMap}
-          onCostUpdated={(id, cost) => dispatch(setProductCost({ id, cost }))}
+          onCostUpdated={(id, cost) => {
+            dispatch(setProductCost({ id, cost }));
+            // The trade rate is floored by cost + margin, so a new cost can
+            // change the trade price — re-fetch the rates.
+            setTradeRefreshKey((k) => k + 1);
+          }}
           onTradePriceUpdated={(id, tradePrice) => {
             dispatch(setProductTradePrice({ id, tradePrice }));
             setTradeRefreshKey((k) => k + 1);
