@@ -20,7 +20,8 @@ import { MagentoService } from '../sync/magento.service';
 // answer the JavaScript challenge, so every photo broke (Sally, 1 Oct
 // 2026). The POS server CAN reach Magento (it goes to the origin
 // directly), so it fetches each image once, keeps a copy on disk and
-// serves it from here. Public route on purpose — <img> tags can't send
+// serves it from here. Lives at /product-image (not under /products,
+// whose :id route would swallow it). Public route on purpose — <img> tags can't send
 // the login token — but it only ever fetches from the Magento media
 // folder, and only serves what it fetched.
 const CACHE_DIR = path.join(process.cwd(), 'image-cache');
@@ -36,7 +37,7 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 @ApiTags('products')
-@Controller('products')
+@Controller('product-image')
 export class ProductImagesController {
   private readonly logger = new Logger(ProductImagesController.name);
   private readonly inflight = new Map<string, Promise<string>>();
@@ -55,7 +56,7 @@ export class ProductImagesController {
     );
   }
 
-  @Get('image')
+  @Get()
   @ApiOperation({ summary: 'Serve a Magento product image via the POS server (cached)' })
   async image(@Query('src') src: string, @Res() res: Response) {
     const url = (src || '').trim();
