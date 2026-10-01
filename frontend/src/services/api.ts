@@ -119,6 +119,9 @@ export const customersApi = {
     api.post(`/customers/${id}/store-credit/cash-out`, data),
 
   updateCustomer: (id: number, data: any) => api.put(`/customers/${id}`, data),
+  // Quick trade toggle (any staff).
+  setCustomerTrade: (id: number, isTrade: boolean) =>
+    api.patch(`/customers/${id}/trade`, { isTrade }),
 
   mergeDuplicates: () => api.post('/customers/merge-duplicates'),
 };

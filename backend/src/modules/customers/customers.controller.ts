@@ -3,11 +3,15 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Body,
   Param,
   Query,
   UseGuards,
   ParseIntPipe,
+  BadRequestException,
+  NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
@@ -192,6 +196,37 @@ export class CustomersController {
       data: { customer },
     };
   }
+
+  // Quick trade on/off for any signed-in staff (Sally, 2 Oct 2026: "a
+  // function button where staff can change Edyta to a Trade customer").
+  // Trade pricing follows the flag immediately; the change is logged
+  // with who did it.
+  @Patch(':id/trade')
+  @ApiOperation({ summary: 'Mark a customer as trade (or back to retail)' })
+  async setTrade(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { isTrade?: boolean },
+    @CurrentUser() user: any,
+  ) {
+    if (typeof body?.isTrade !== 'boolean') {
+      throw new BadRequestException('isTrade must be true or false');
+    }
+    const before = await this.customersService.findById(id);
+    if (!before) throw new NotFoundException('Customer not found');
+    const customer = await this.customersService.update(id, { isTrade: body.isTrade });
+    this.tradeLog.log(
+      `Customer #${id} (${before.firstName} ${before.lastName || ''}${before.company ? ', ' + before.company : ''}) ` +
+        `${body.isTrade ? 'marked TRADE' : 'set back to retail'} by user #${user?.id ?? '?'}`,
+    );
+    return {
+      success: true,
+      message: body.isTrade
+        ? `${before.firstName} is now a trade customer`
+        : `${before.firstName} is no longer a trade customer`,
+      data: { customer },
+    };
+  }
+  private readonly tradeLog = new Logger('CustomerTrade');
 
   @Put(':id')
   @ApiOperation({ summary: 'Update customer' })

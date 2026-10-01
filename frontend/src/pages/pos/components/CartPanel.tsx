@@ -958,7 +958,7 @@ export default function CartPanel({
                     <label className="block text-xs text-gray-400 mb-1">Customer Name</label>
                     <input
                       type="text"
-                      placeholder="Search by name"
+                      placeholder="Name or company name"
                       className="input"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
@@ -1009,23 +1009,63 @@ export default function CartPanel({
                     <>
                       <p className="text-xs text-gray-400 mb-1">{custResults.length} result(s)</p>
                       {custResults.map((c: any) => (
-                        <button
+                        <div
                           key={c.id}
-                          className="w-full text-left px-4 py-3 rounded-lg hover:bg-pos-accent border border-gray-700"
-                          onClick={() => {
-                            onSetCustomer({
-                              id: c.id,
-                              name: `${c.firstName} ${c.lastName}`,
-                              isTrade: !!c.isTrade,
-                            });
-                            setShowCustomerModal(false);
-                          }}
+                          className="w-full flex items-center gap-2 px-4 py-3 rounded-lg hover:bg-pos-accent border border-gray-700"
                         >
-                          <p className="font-medium">{c.firstName} {c.lastName}</p>
-                          <p className="text-xs text-gray-400">
-                            ID: {c.id} {c.email ? `| ${c.email}` : ''} {c.phone ? `| ${c.phone}` : ''}
-                          </p>
-                        </button>
+                          <button
+                            className="flex-1 text-left min-w-0"
+                            onClick={() => {
+                              onSetCustomer({
+                                id: c.id,
+                                name: `${c.firstName} ${c.lastName || ''}`.trim(),
+                                isTrade: !!c.isTrade,
+                              });
+                              setShowCustomerModal(false);
+                            }}
+                          >
+                            <p className="font-medium flex items-center gap-2 flex-wrap">
+                              <span>{c.firstName} {c.lastName}</span>
+                              {/* Trade accounts go by the business name (Sally, 2 Oct 2026). */}
+                              {c.company && (
+                                <span className="text-sm font-normal text-gray-300">· {c.company}</span>
+                              )}
+                              {c.isTrade && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-orange-600/30 text-orange-300 border border-orange-500/40">
+                                  Trade
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-xs text-gray-400">
+                              ID: {c.id} {c.email ? `| ${c.email}` : ''} {c.phone ? `| ${c.phone}` : ''}
+                            </p>
+                          </button>
+                          {/* One-click trade on/off, right where staff find the customer. */}
+                          <button
+                            type="button"
+                            className={`shrink-0 text-xs px-2 py-1 rounded border ${
+                              c.isTrade
+                                ? 'border-gray-600 text-gray-400 hover:text-gray-200'
+                                : 'border-orange-500/60 text-orange-300 hover:bg-orange-500/10'
+                            }`}
+                            title={c.isTrade ? 'Remove trade status from this customer' : 'Make this customer a trade customer (trade pricing applies)'}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                const r = await customersApi.setCustomerTrade(c.id, !c.isTrade);
+                                const updated = r.data?.data?.customer;
+                                setCustResults((prev) =>
+                                  prev.map((x) => (x.id === c.id ? { ...x, isTrade: !c.isTrade, ...(updated || {}) } : x)),
+                                );
+                                toast.success(r.data?.message || 'Updated');
+                              } catch (err: any) {
+                                toast.error(err?.response?.data?.message || 'Could not update trade status');
+                              }
+                            }}
+                          >
+                            {c.isTrade ? 'Remove trade' : 'Make trade'}
+                          </button>
+                        </div>
                       ))}
                     </>
                   )}

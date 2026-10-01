@@ -767,6 +767,29 @@ export default function CustomersPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {/* Quick trade on/off (Sally, 2 Oct 2026). Any staff. */}
+                <button
+                  className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg border ${
+                    selectedCustomer.isTrade
+                      ? 'border-gray-600 text-gray-300 hover:bg-pos-accent'
+                      : 'border-orange-500/60 text-orange-300 hover:bg-orange-500/10'
+                  }`}
+                  title={selectedCustomer.isTrade ? 'Remove trade status' : 'Make this a trade customer — trade pricing will apply to their sales'}
+                  onClick={async () => {
+                    const next = !selectedCustomer.isTrade;
+                    try {
+                      const r = await customersApi.setCustomerTrade(selectedCustomer.id, next);
+                      const updated = r.data?.data?.customer;
+                      setSelectedCustomer({ ...selectedCustomer, ...(updated || {}), isTrade: next });
+                      setCustomers((prev) => prev.map((c) => (c.id === selectedCustomer.id ? { ...c, isTrade: next } : c)));
+                      toast.success(r.data?.message || 'Updated');
+                    } catch (e: any) {
+                      toast.error(e?.response?.data?.message || 'Could not update trade status');
+                    }
+                  }}
+                >
+                  {selectedCustomer.isTrade ? 'Remove Trade' : 'Make Trade Customer'}
+                </button>
                 <button
                   className="btn-secondary flex items-center gap-2 text-sm"
                   onClick={openEditCustomer}
