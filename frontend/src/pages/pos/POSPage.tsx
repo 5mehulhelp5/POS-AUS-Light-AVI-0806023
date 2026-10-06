@@ -30,6 +30,7 @@ import {
   setTradeMode,
   restoreCart,
   setTradeAutoDiscounts,
+  setPromoDiscounts,
   setExchangeContext,
   loadQuote,
 } from '../../store/slices/cartSlice';
@@ -150,6 +151,9 @@ export default function POSPage() {
   // Trade auto-discount % per visible product, used to show a yellow
   // "Trade $X" tag beside the retail price on each grid card.
   const [tradePctMap, setTradePctMap] = useState<Record<number, number>>({});
+  // Checkout promotion per product (fans 10%, Oct 2026) — for the
+  // product page badge; cart lines get it via setPromoDiscounts.
+  const [promoMap, setPromoMap] = useState<Record<number, { percent: number; label: string | null }>>({});
   // Bumped when a product's trade price is edited, to re-fetch the rates.
   const [tradeRefreshKey, setTradeRefreshKey] = useState(0);
   // Minimum margin over cost — a setting (20% since 29 Sep 2026).
@@ -362,6 +366,7 @@ export default function POSPage() {
     const ids = Array.from(new Set([...gridIds, ...cartIds]));
     if (ids.length === 0) {
       setTradePctMap({});
+      setPromoMap({});
       return;
     }
     let cancelled = false;
@@ -376,6 +381,11 @@ export default function POSPage() {
           if (pct > 0) map[Number(pid)] = pct;
         }
         setTradePctMap(map);
+        // Promotion applies to every customer, so the cart takes it here
+        // rather than in the trade-only effect below.
+        const promos = (r.data?.data?.promos || {}) as Record<number, { percent: number; label: string | null }>;
+        setPromoMap(promos);
+        dispatch(setPromoDiscounts(promos));
       })
       .catch(() => {
         // Non-essential — cards just won't show the trade tag.
@@ -1045,6 +1055,7 @@ export default function POSPage() {
           productId={detailProduct.id}
           fallbackProduct={detailProduct}
           tradePctMap={tradePctMap}
+          promoMap={promoMap}
           onCostUpdated={(id, cost) => {
             dispatch(setProductCost({ id, cost }));
             // The trade rate is floored by cost + margin, so a new cost can

@@ -235,6 +235,12 @@ export class OrdersService {
             ? await this.tradeDiscounts.getAutoDiscount(product)
             : { percent: 0, label: null, baseOnSpecialPrice: false };
         const autoDiscount = auto.percent;
+        // Store-wide promotion (fans 10%, Oct 2026) — every customer. Not
+        // on a line the cashier re-priced, nor on locked quote prices.
+        const promo =
+          !dto.trustItemUnitPrices && !item.priceEdited
+            ? await this.tradeDiscounts.getPromoDiscount(product)
+            : { percent: 0, label: null };
 
         // Base price selection:
         //   - Retail customers on a SALE item: use special price.
@@ -287,8 +293,11 @@ export class OrdersService {
         // top would double-discount. On a cashier-re-priced line the
         // edited price IS the base (the cart applies the trade % to it),
         // so the auto rate stays regardless of tradeWins.
-        const appliedAutoDiscount =
-          tradeWins || item.priceEdited ? autoDiscount : 0;
+        // A trade customer gets whichever is better: trade rate or promotion.
+        const appliedAutoDiscount = Math.max(
+          tradeWins || item.priceEdited ? autoDiscount : 0,
+          promo.percent,
+        );
         const effectiveDiscount = Math.max(manualDiscount, appliedAutoDiscount);
         return {
           productId: item.productId,

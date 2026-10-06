@@ -25,6 +25,11 @@ import {
   MIN_MARGIN_SETTING_KEY,
   normaliseMarginPercent,
 } from './trade-discounts.service';
+import {
+  DEFAULT_PROMOTION,
+  PROMOTION_SETTING_KEY,
+  normalisePromotion,
+} from './promotion.defaults';
 import { SettingsService } from '../settings/settings.service';
 import { SettingType } from '../settings/entities/setting.entity';
 import {
@@ -248,6 +253,43 @@ export class ProductsController {
       success: true,
       message: `Minimum margin is now cost + ${minMarginPercent}%`,
       data: { minMarginPercent },
+    };
+  }
+
+  // Store-wide promotion (fans 10% at checkout, Oct 2026). Declared
+  // before @Get(':id'). Managers can view, admins change it.
+  @Get('promotion')
+  @UseGuards(RolesGuard)
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER)
+  @ApiOperation({ summary: 'Get the checkout promotion and how many products it covers' })
+  async getPromotion() {
+    const promotion = await this.tradeDiscounts.getPromotion();
+    const summary = await this.tradeDiscounts.promotionSummary();
+    return { success: true, data: { promotion, defaults: DEFAULT_PROMOTION, summary } };
+  }
+
+  @Put('promotion')
+  @UseGuards(RolesGuard)
+  @Roles(RoleNames.ADMIN)
+  @ApiOperation({ summary: 'Update the checkout promotion' })
+  async updatePromotion(@Body() dto: Record<string, unknown>, @CurrentUser() user: any) {
+    const promotion = normalisePromotion(dto);
+    await this.settingsService.set(
+      PROMOTION_SETTING_KEY,
+      promotion,
+      SettingType.JSON,
+      'Store-wide checkout promotion (all customers)',
+      user?.id,
+    );
+    this.tradeDiscounts.invalidatePromotionCache();
+    this.logger.log(`Promotion updated by user #${user?.id ?? '?'}: ${JSON.stringify(promotion)}`);
+    const summary = await this.tradeDiscounts.promotionSummary();
+    return {
+      success: true,
+      message: promotion.enabled
+        ? `${promotion.label}: ${promotion.percent}% off is on`
+        : `${promotion.label} is off`,
+      data: { promotion, summary },
     };
   }
 

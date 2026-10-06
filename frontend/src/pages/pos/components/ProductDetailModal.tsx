@@ -38,6 +38,8 @@ interface ProductDetailModalProps {
   // Trade auto-discount % keyed by productId, shared from POSPage so the
   // detail modal can render the same yellow "Trade $X" tag as the grid card.
   tradePctMap?: Record<number, number>;
+  // Checkout promotion per product (fans 10%, Oct 2026).
+  promoMap?: Record<number, { percent: number; label: string | null }>;
   // Fired after a manager/admin saves a new supplier cost, so the grid's
   // copy (and the cart margin guard) pick up the change.
   onCostUpdated?: (productId: number, cost: number | null) => void;
@@ -68,6 +70,7 @@ export default function ProductDetailModal({
   productId,
   fallbackProduct,
   tradePctMap,
+  promoMap,
   onCostUpdated,
   onTradePriceUpdated,
   onClose,
@@ -303,6 +306,22 @@ export default function ProductDetailModal({
                   )}
                 </>
               )}
+              {/* Checkout promotion, so staff can tell the customer before
+                  ringing it up (Avi, 7 Oct 2026). */}
+              {(() => {
+                const promo = promoMap?.[product.id];
+                if (!promo || !(promo.percent > 0)) return null;
+                const promoPrice =
+                  Math.round(effectiveProductPrice(product) * (1 - promo.percent / 100) * 100) / 100;
+                return (
+                  <span
+                    className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 border border-emerald-500/50"
+                    title={promo.label || 'Promotion'}
+                  >
+                    {fmtPct(promo.percent)}% off at checkout · ${promoPrice.toFixed(2)}
+                  </span>
+                );
+              })()}
               {(() => {
                 const pct = tradePctMap?.[product.id] || 0;
                 const rrp = Number(product.price);

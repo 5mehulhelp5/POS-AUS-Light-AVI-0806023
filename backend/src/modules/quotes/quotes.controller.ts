@@ -59,10 +59,14 @@ export class QuotesController {
       number,
       { percent: number; label: string | null; baseOnSpecialPrice: boolean }
     > = {};
+    // Store-wide promotion per product (applies to every customer).
+    const promos: Record<number, { percent: number; label: string | null }> = {};
     for (const p of products) {
       discounts[p.id] = await this.tradeDiscounts.getAutoDiscount(p);
+      const promo = await this.tradeDiscounts.getPromoDiscount(p);
+      if (promo.percent > 0) promos[p.id] = promo;
     }
-    return { success: true, data: { discounts } };
+    return { success: true, data: { discounts, promos } };
   }
 
   @Post()

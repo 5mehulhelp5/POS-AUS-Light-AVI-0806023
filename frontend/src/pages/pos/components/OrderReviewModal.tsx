@@ -4,7 +4,7 @@ import {
   ArrowRightIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import { CartItem } from '../../../store/slices/cartSlice';
+import { CartItem, effectiveLineDiscount } from '../../../store/slices/cartSlice';
 
 export interface OrderReviewSelections {
   backorderByProductId: Record<number, boolean>;
@@ -265,10 +265,7 @@ export default function OrderReviewModal({
                         strike-through and displays the discount price"). */}
                     <td className="px-3 py-2 text-right">
                       {(() => {
-                        const pct = Math.max(
-                          item.discountPercent || 0,
-                          item.autoDiscountPercent || 0,
-                        );
+                        const pct = effectiveLineDiscount(item);
                         if (pct <= 0) {
                           return <>${item.unitPrice.toFixed(2)}</>;
                         }

@@ -115,6 +115,20 @@ export default function SettingsPage() {
   const [minMarginInput, setMinMarginInput] = useState('20');
   const [minMarginSaving, setMinMarginSaving] = useState(false);
   const [minMarginMsg, setMinMarginMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Checkout promotion (fans 10%, Oct 2026).
+  const [promo, setPromo] = useState<{
+    enabled: boolean;
+    label: string;
+    percent: number;
+    includeCategories: string[];
+    excludeCategories: string[];
+    excludePrefixes: string[];
+    endsOn: string | null;
+  } | null>(null);
+  const [promoSummary, setPromoSummary] = useState<Record<string, number> | null>(null);
+  const [promoPrefixes, setPromoPrefixes] = useState('');
+  const [promoSaving, setPromoSaving] = useState(false);
+  const [promoMsg, setPromoMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Sync state
   const [syncStatus, setSyncStatus] = useState<{
@@ -198,6 +212,14 @@ export default function SettingsPage() {
           try {
             const cfg = await productsApi.getPricingConfig();
             setMinMarginInput(String(cfg.data?.data?.minMarginPercent ?? 20));
+            try {
+              const pr = await productsApi.getPromotion();
+              setPromo(pr.data?.data?.promotion || null);
+              setPromoSummary(pr.data?.data?.summary || null);
+              setPromoPrefixes((pr.data?.data?.promotion?.excludePrefixes || []).join(', '));
+            } catch {
+              // older backend
+            }
           } catch {
             // older backend — leave the default in the box
           }
@@ -313,6 +335,33 @@ export default function SettingsPage() {
     const iv = setInterval(tick, 3000);
     return () => clearInterval(iv);
   }, [activeTab]);
+
+  const handleSavePromo = async () => {
+    if (!promo) return;
+    const pct = Number(promo.percent);
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 90) {
+      setPromoMsg({ ok: false, text: 'Enter a percent between 1 and 90' });
+      return;
+    }
+    setPromoSaving(true);
+    setPromoMsg(null);
+    try {
+      const r = await productsApi.updatePromotion({
+        ...promo,
+        percent: pct,
+        excludePrefixes: promoPrefixes,
+        endsOn: promo.endsOn || null,
+      });
+      setPromo(r.data?.data?.promotion || promo);
+      setPromoSummary(r.data?.data?.summary || null);
+      setPromoPrefixes((r.data?.data?.promotion?.excludePrefixes || []).join(', '));
+      setPromoMsg({ ok: true, text: r.data?.message || 'Saved' });
+    } catch (e: any) {
+      setPromoMsg({ ok: false, text: e.response?.data?.message || 'Failed to save the promotion' });
+    } finally {
+      setPromoSaving(false);
+    }
+  };
 
   const handleSaveMinMargin = async () => {
     const n = parseFloat(minMarginInput);
@@ -919,6 +968,87 @@ export default function SettingsPage() {
           {/* Trade auto-discount rules */}
           {activeTab === 'trade' && (
             <div className="space-y-6">
+              {/* Checkout promotion (fans 10%, Oct 2026) — every customer. */}
+              {promo && (
+                <div className="card p-6">
+                  <div className="flex items-center justify-between gap-4 mb-1">
+                    <h2 className="text-lg font-semibold">Fan Promotion</h2>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4"
+                        checked={promo.enabled}
+                        onChange={(e) => setPromo({ ...promo, enabled: e.target.checked })}
+                      />
+                      <span>{promo.enabled ? 'On' : 'Off'}</span>
+                    </label>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Comes off automatically at checkout for every customer, on{' '}
+                    {promo.includeCategories.join(', ')} (not{' '}
+                    {promo.excludeCategories.join(', ') || 'nothing'}). Items on sale or in a
+                    Sale / Clearance category never get it, and nothing goes below the
+                    minimum margin. Trade customers get whichever is better: their trade
+                    price or this.
+                  </p>
+                  <div className="flex items-end gap-4 flex-wrap">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Discount</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min={1}
+                          max={90}
+                          step="0.5"
+                          className="input w-28 pr-8"
+                          value={promo.percent}
+                          onChange={(e) => setPromo({ ...promo, percent: Number(e.target.value) })}
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-[240px]">
+                      <label className="block text-sm font-medium mb-1">
+                        Exclude products whose name or SKU starts with
+                      </label>
+                      <input
+                        type="text"
+                        className="input w-full"
+                        value={promoPrefixes}
+                        onChange={(e) => setPromoPrefixes(e.target.value)}
+                        placeholder="Iconic, Artemis, Sycamore"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Last day (optional)</label>
+                      <input
+                        type="date"
+                        className="input w-44"
+                        value={promo.endsOn || ''}
+                        onChange={(e) => setPromo({ ...promo, endsOn: e.target.value || null })}
+                      />
+                    </div>
+                    <button className="btn-primary" onClick={handleSavePromo} disabled={promoSaving}>
+                      {promoSaving ? 'Saving…' : 'Save Promotion'}
+                    </button>
+                  </div>
+                  {promoMsg && (
+                    <p className={`text-sm mt-3 ${promoMsg.ok ? 'text-green-500' : 'text-red-400'}`}>
+                      {promoMsg.text}
+                    </p>
+                  )}
+                  {promoSummary && (
+                    <p className="text-sm text-gray-400 mt-3">
+                      Right now: <span className="font-semibold text-pos-text">{promoSummary.eligible + (promoSummary.limitedByMargin || 0)}</span>{' '}
+                      fans get it
+                      {promoSummary.limitedByMargin ? ` (${promoSummary.limitedByMargin} limited by the minimum margin)` : ''}.
+                      Excluded: {promoSummary.excludedSale} on sale / clearance, {promoSummary.excludedBrand} by
+                      name, {promoSummary.excludedMargin} already at the minimum margin.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Minimum margin over cost — applies to every sale. */}
               <div className="card p-6">
                 <h2 className="text-lg font-semibold mb-1">Minimum Margin</h2>

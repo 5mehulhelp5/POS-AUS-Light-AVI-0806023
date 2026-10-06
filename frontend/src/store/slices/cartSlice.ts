@@ -14,6 +14,11 @@ export interface CartItem {
   // rule matches. The label is shown on the cart line for transparency.
   autoDiscountPercent?: number;
   autoDiscountLabel?: string | null;
+  // Store-wide checkout promotion (fans 10%, Oct 2026) — every customer.
+  // Fetched from the server preview; never applied on a re-priced line
+  // or a cart loaded from a quote (the server does the same).
+  promoPercent?: number;
+  promoLabel?: string | null;
   discountAmount: number;
   taxAmount: number;
   rowTotal: number;
@@ -102,6 +107,27 @@ const initialState: CartState = {
 // Australian prices are GST-inclusive. GST = price / 11 (i.e. 1/11th of the inclusive price).
 const GST_DIVISOR = 11;
 
+// The discount a line actually gets: the best of the cashier's manual %,
+// the trade rate and the checkout promotion.
+export function linePromoPercent(item: CartItem): number {
+  return item.priceEdited ? 0 : item.promoPercent || 0;
+}
+export function effectiveLineDiscount(item: CartItem): number {
+  return Math.max(
+    item.discountPercent || 0,
+    item.autoDiscountPercent || 0,
+    linePromoPercent(item),
+  );
+}
+// Which discount is winning, for the cart label.
+export function lineDiscountSource(item: CartItem): 'manual' | 'trade' | 'promo' | null {
+  const eff = effectiveLineDiscount(item);
+  if (eff <= 0) return null;
+  if ((item.discountPercent || 0) >= eff) return 'manual';
+  if ((item.autoDiscountPercent || 0) >= eff) return 'trade';
+  return 'promo';
+}
+
 function recalculateTotals(state: CartState): void {
   // Calculate item totals (all prices are GST-inclusive)
   let subtotal = 0;
@@ -113,10 +139,7 @@ function recalculateTotals(state: CartState): void {
 
   state.items.forEach((item) => {
     const lineSubtotal = item.unitPrice * item.quantity;
-    const effectivePercent = Math.max(
-      item.discountPercent || 0,
-      item.autoDiscountPercent || 0,
-    );
+    const effectivePercent = effectiveLineDiscount(item);
     const discount = lineSubtotal * (effectivePercent / 100);
     const afterDiscount = lineSubtotal - discount;
     // GST is included in the price, extract it: GST = inclusive / 11
@@ -369,6 +392,27 @@ const cartSlice = createSlice({
       recalculateTotals(state);
     },
 
+    // Checkout promotion per product, from the server preview. Lines not in
+    // the map lose any promo. Quote carts keep their quoted prices.
+    setPromoDiscounts: (
+      state,
+      action: PayloadAction<Record<number, { percent: number; label: string | null }>>,
+    ) => {
+      const map = action.payload || {};
+      let changed = false;
+      state.items.forEach((it) => {
+        const hit = state.fromQuoteId ? null : map[it.productId];
+        const pct = hit ? hit.percent : 0;
+        const label = hit ? hit.label : null;
+        if ((it.promoPercent || 0) !== pct || (it.promoLabel || null) !== label) {
+          it.promoPercent = pct;
+          it.promoLabel = label;
+          changed = true;
+        }
+      });
+      if (changed) recalculateTotals(state);
+    },
+
     setNotes: (state, action: PayloadAction<string>) => {
       state.notes = action.payload;
     },
@@ -505,6 +549,7 @@ export const {
   setTradeMode,
   restoreCart,
   setTradeAutoDiscounts,
+  setPromoDiscounts,
   setNotes,
   setInternalNotes,
   setExchangeContext,

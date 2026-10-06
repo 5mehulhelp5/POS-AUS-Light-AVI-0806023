@@ -16,6 +16,7 @@ import toast from 'react-hot-toast';
 import { CartItem, CartDiscount } from '../../../store/slices/cartSlice';
 import { competitorApi, customersApi } from '../../../services/api';
 import { fmtPct } from '../../../utils/pricingConfig';
+import { effectiveLineDiscount, lineDiscountSource } from '../../../store/slices/cartSlice';
 import { posImage } from '../../../utils/imageUrl';
 
 interface CartPanelProps {
@@ -391,10 +392,7 @@ export default function CartPanel({
                           // net price whenever a discount is applied, so the
                           // cashier sees what the customer actually pays
                           // without opening the discount box.
-                          const effective = Math.max(
-                            item.discountPercent || 0,
-                            item.autoDiscountPercent || 0,
-                          );
+                          const effective = effectiveLineDiscount(item);
                           const netPrice =
                             Math.round(
                               item.unitPrice * (1 - effective / 100) * 100,
@@ -445,26 +443,28 @@ export default function CartPanel({
                         );
                       })()}
                       {(() => {
-                        const effective = Math.max(
-                          item.discountPercent || 0,
-                          item.autoDiscountPercent || 0,
-                        );
+                        const effective = effectiveLineDiscount(item);
                         if (effective <= 0) return null;
-                        const isAuto =
-                          (item.autoDiscountPercent || 0) >=
-                          (item.discountPercent || 0);
+                        const source = lineDiscountSource(item);
                         return (
                           <span
                             className={`text-xs ${
-                              isAuto ? 'text-orange-400' : 'text-green-400'
+                              source === 'trade'
+                                ? 'text-orange-400'
+                                : source === 'promo'
+                                  ? 'text-emerald-500 font-semibold'
+                                  : 'text-green-400'
                             }`}
                             title={
-                              isAuto
+                              source === 'trade'
                                 ? item.autoDiscountLabel || 'Trade auto'
-                                : ''
+                                : source === 'promo'
+                                  ? item.promoLabel || 'Promotion'
+                                  : ''
                             }
                           >
-                            -{fmtPct(effective)}%{isAuto ? ' trade' : ''}
+                            -{fmtPct(effective)}%
+                            {source === 'trade' ? ' trade' : source === 'promo' ? ' promo' : ''}
                           </span>
                         );
                       })()}

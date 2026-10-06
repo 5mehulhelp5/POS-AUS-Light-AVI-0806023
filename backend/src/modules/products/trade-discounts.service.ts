@@ -9,6 +9,13 @@ import {
   DEFAULT_TRADE_RULES,
   normaliseTradeRules,
 } from './trade-rules.defaults';
+import {
+  Promotion,
+  DEFAULT_PROMOTION,
+  PROMOTION_SETTING_KEY,
+  normalisePromotion,
+} from './promotion.defaults';
+import { In } from 'typeorm';
 
 // Trade auto-discounts mirror the Magento cart price rules Sally
 // maintains (rule IDs 88, 89, 92) so the POS can price a trade cart
@@ -45,8 +52,159 @@ export class TradeDiscountsService {
   constructor(
     @InjectRepository(Category)
     private readonly categoryRepository: Repository<Category>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
     private readonly settingsService: SettingsService,
   ) {}
+
+  // ---------------------------------------------------------------
+  // Store-wide promotion (fans 10% at checkout, Oct 2026). Applies to
+  // every customer; see promotion.defaults.ts for the rules.
+  // ---------------------------------------------------------------
+  private promoCache: { promo: Promotion; loadedAt: number } | null = null;
+  private exactNameSubtreeCache = new Map<string, Set<number>>();
+
+  async getPromotion(): Promise<Promotion> {
+    const now = Date.now();
+    if (this.promoCache && now - this.promoCache.loadedAt < RULES_CACHE_TTL_MS) {
+      return this.promoCache.promo;
+    }
+    let promo = DEFAULT_PROMOTION;
+    try {
+      const stored = await this.settingsService.getValue<unknown>(PROMOTION_SETTING_KEY, null);
+      if (stored != null) promo = normalisePromotion(stored);
+    } catch {
+      // keep the default rather than fail a sale over a settings read
+    }
+    this.promoCache = { promo, loadedAt: now };
+    return promo;
+  }
+
+  invalidatePromotionCache(): void {
+    this.promoCache = null;
+    this.exactNameSubtreeCache.clear();
+  }
+
+  // Exact (case-insensitive) category name -> that category and all its
+  // descendants. "Fans" must not catch "Exhausts Fans".
+  private async getSubtreeIdsByExactName(name: string): Promise<Set<number>> {
+    const key = name.trim().toLowerCase();
+    const cached = this.exactNameSubtreeCache.get(key);
+    if (cached) return cached;
+    const all = await this.categoryRepository.find({ select: ['id', 'name'] });
+    const result = new Set<number>();
+    for (const root of all.filter((c) => (c.name || '').trim().toLowerCase() === key)) {
+      for (const id of await this.getSubtreeIds(root.id)) result.add(id);
+    }
+    this.exactNameSubtreeCache.set(key, result);
+    return result;
+  }
+
+  private static storeToday(): string {
+    // en-CA formats as YYYY-MM-DD
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Australia/Melbourne',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  }
+
+  // Why a product does / doesn't get the promotion. Needs the
+  // categories relation loaded.
+  async evaluatePromo(product: Product): Promise<{
+    percent: number;
+    label: string | null;
+    reason: 'eligible' | 'limited_by_margin' | 'margin' | 'sale' | 'brand' | 'out_of_scope' | 'off';
+  }> {
+    const promo = await this.getPromotion();
+    if (!promo.enabled || !(promo.percent > 0)) return { percent: 0, label: null, reason: 'off' };
+    if (promo.endsOn && TradeDiscountsService.storeToday() > promo.endsOn) {
+      return { percent: 0, label: null, reason: 'off' };
+    }
+    const ids = new Set<number>((product.categories || []).map((c) => c.id));
+    let inScope = false;
+    for (const n of promo.includeCategories) {
+      const sub = await this.getSubtreeIdsByExactName(n);
+      if ([...ids].some((id) => sub.has(id))) { inScope = true; break; }
+    }
+    if (inScope) {
+      for (const n of promo.excludeCategories) {
+        const sub = await this.getSubtreeIdsByExactName(n);
+        if ([...ids].some((id) => sub.has(id))) { inScope = false; break; }
+      }
+    }
+    if (!inScope) return { percent: 0, label: null, reason: 'out_of_scope' };
+
+    const name = (product.name || '').trim();
+    const sku = (product.sku || '').trim().toLowerCase();
+    for (const raw of promo.excludePrefixes) {
+      const pre = raw.trim();
+      if (!pre) continue;
+      const esc = pre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (sku.startsWith(pre.toLowerCase()) || new RegExp(`^${esc}\\b`, 'i').test(name)) {
+        return { percent: 0, label: null, reason: 'brand' };
+      }
+    }
+    // "Excluding the ones already on sale and clearance": same test as the
+    // SALE tag staff see on the product (special price active, or in a
+    // Sale / Clearance category).
+    if (product.isOnSale || product.isInSaleCategory || this.isClearanceProduct(product)) {
+      return { percent: 0, label: null, reason: 'sale' };
+    }
+    const label = `${promo.label} ${promo.percent}% off`;
+    const floored = await this.applyMarginFloor(product, {
+      percent: promo.percent,
+      label,
+      baseOnSpecialPrice: false,
+    });
+    if (floored.percent <= 0) return { percent: 0, label: null, reason: 'margin' };
+    if (floored.percent < promo.percent - 1e-9) {
+      return { percent: floored.percent, label: `${label} — limited to the minimum margin`, reason: 'limited_by_margin' };
+    }
+    return { percent: floored.percent, label, reason: 'eligible' };
+  }
+
+  async getPromoDiscount(product: Product): Promise<{ percent: number; label: string | null }> {
+    const r = await this.evaluatePromo(product);
+    return { percent: r.percent, label: r.label };
+  }
+
+  // For the Settings card: how the current rules play out across the range.
+  async promotionSummary(): Promise<Record<string, number>> {
+    const promo = await this.getPromotion();
+    const scope = new Set<number>();
+    for (const n of promo.includeCategories) {
+      for (const id of await this.getSubtreeIdsByExactName(n)) scope.add(id);
+    }
+    if (scope.size === 0) return { inScope: 0, eligible: 0, limitedByMargin: 0, excludedSale: 0, excludedBrand: 0, excludedMargin: 0 };
+    const rows = await this.productRepository
+      .createQueryBuilder('p')
+      .innerJoin('p.categories', 'c', 'c.id IN (:...ids)', { ids: [...scope] })
+      .select('p.id', 'id')
+      .where('p.isActive = 1')
+      .distinct(true)
+      .getRawMany();
+    const productIds = rows.map((r: { id: number }) => Number(r.id));
+    const counts: Record<string, number> = { inScope: 0, eligible: 0, limitedByMargin: 0, excludedSale: 0, excludedBrand: 0, excludedMargin: 0 };
+    for (let i = 0; i < productIds.length; i += 500) {
+      const batch = await this.productRepository.find({
+        where: { id: In(productIds.slice(i, i + 500)) },
+        relations: ['categories'],
+      });
+      for (const prod of batch) {
+        const r = await this.evaluatePromo(prod);
+        if (r.reason === 'out_of_scope' || r.reason === 'off') continue;
+        counts.inScope++;
+        if (r.reason === 'eligible') counts.eligible++;
+        else if (r.reason === 'limited_by_margin') counts.limitedByMargin++;
+        else if (r.reason === 'sale') counts.excludedSale++;
+        else if (r.reason === 'brand') counts.excludedBrand++;
+        else if (r.reason === 'margin') counts.excludedMargin++;
+      }
+    }
+    return counts;
+  }
 
   // Rules are read on every priced line, so cache them briefly rather
   // than hitting settings per product. An admin edit takes effect

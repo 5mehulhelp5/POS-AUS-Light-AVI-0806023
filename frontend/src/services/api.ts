@@ -91,6 +91,11 @@ export const productsApi = {
     confirmBelowFloor = false,
   ) => api.patch(`/products/${id}/trade-price`, { tradePrice, confirmBelowFloor }),
 
+  // Checkout promotion (fans 10%, Oct 2026): manager/admin read, admin write.
+  getPromotion: () => api.get('/products/promotion'),
+  updatePromotion: (promotion: Record<string, unknown>) =>
+    api.put('/products/promotion', promotion),
+
   // Minimum margin over cost (any staff reads; admin writes).
   getPricingConfig: () => api.get('/products/pricing-config'),
   updatePricingConfig: (minMarginPercent: number) =>
