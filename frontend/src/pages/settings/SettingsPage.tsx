@@ -124,6 +124,8 @@ export default function SettingsPage() {
     excludeCategories: string[];
     excludePrefixes: string[];
     endsOn: string | null;
+    showBanner: boolean;
+    bannerText: string;
   } | null>(null);
   const [promoSummary, setPromoSummary] = useState<Record<string, number> | null>(null);
   const [promoPrefixes, setPromoPrefixes] = useState('');
@@ -1031,6 +1033,29 @@ export default function SettingsPage() {
                     <button className="btn-primary" onClick={handleSavePromo} disabled={promoSaving}>
                       {promoSaving ? 'Saving…' : 'Save Promotion'}
                     </button>
+                  </div>
+                  <div className="mt-4">
+                    <label className="flex items-center gap-2 text-sm font-medium mb-1">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4"
+                        checked={promo.showBanner !== false}
+                        onChange={(e) => setPromo({ ...promo, showBanner: e.target.checked })}
+                      />
+                      Show a red banner across the top of the POS while it runs
+                    </label>
+                    <input
+                      type="text"
+                      className="input w-full"
+                      maxLength={300}
+                      value={promo.bannerText || ''}
+                      onChange={(e) => setPromo({ ...promo, bannerText: e.target.value })}
+                      disabled={promo.showBanner === false}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {'{percent}'} is replaced with the discount. The last day is added
+                      automatically if one is set.
+                    </p>
                   </div>
                   {promoMsg && (
                     <p className={`text-sm mt-3 ${promoMsg.ok ? 'text-green-500' : 'text-red-400'}`}>

@@ -268,6 +268,25 @@ export class ProductsController {
     return { success: true, data: { promotion, defaults: DEFAULT_PROMOTION, summary } };
   }
 
+  // What the till's red banner shows. Any signed-in staff.
+  @Get('promotion/active')
+  @ApiOperation({ summary: 'The running checkout promotion, for the POS banner' })
+  async getActivePromotion() {
+    const promo = await this.tradeDiscounts.getPromotion();
+    const active = await this.tradeDiscounts.isPromotionActive();
+    return {
+      success: true,
+      data: {
+        active,
+        showBanner: active && promo.showBanner,
+        percent: promo.percent,
+        label: promo.label,
+        endsOn: promo.endsOn,
+        bannerText: promo.bannerText.replace(/\{percent\}/g, String(promo.percent)),
+      },
+    };
+  }
+
   @Put('promotion')
   @UseGuards(RolesGuard)
   @Roles(RoleNames.ADMIN)

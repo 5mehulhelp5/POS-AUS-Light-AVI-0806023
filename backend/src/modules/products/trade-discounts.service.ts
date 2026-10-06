@@ -80,6 +80,13 @@ export class TradeDiscountsService {
     return promo;
   }
 
+  // On, has a discount, and not past its last day.
+  async isPromotionActive(): Promise<boolean> {
+    const promo = await this.getPromotion();
+    if (!promo.enabled || !(promo.percent > 0)) return false;
+    return !(promo.endsOn && TradeDiscountsService.storeToday() > promo.endsOn);
+  }
+
   invalidatePromotionCache(): void {
     this.promoCache = null;
     this.exactNameSubtreeCache.clear();

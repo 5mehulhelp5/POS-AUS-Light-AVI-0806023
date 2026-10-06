@@ -93,6 +93,8 @@ export const productsApi = {
 
   // Checkout promotion (fans 10%, Oct 2026): manager/admin read, admin write.
   getPromotion: () => api.get('/products/promotion'),
+  // Running promotion for the red banner on the POS (any staff).
+  getActivePromotion: () => api.get('/products/promotion/active'),
   updatePromotion: (promotion: Record<string, unknown>) =>
     api.put('/products/promotion', promotion),
 

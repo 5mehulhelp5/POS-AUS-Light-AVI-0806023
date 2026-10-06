@@ -154,6 +154,30 @@ export default function POSPage() {
   // Checkout promotion per product (fans 10%, Oct 2026) — for the
   // product page badge; cart lines get it via setPromoDiscounts.
   const [promoMap, setPromoMap] = useState<Record<number, { percent: number; label: string | null }>>({});
+  // Red banner for the running promotion. Re-checked every 5 minutes so
+  // switching the promotion off (or it reaching its last day) clears it
+  // without anyone reloading the till.
+  const [promoBanner, setPromoBanner] = useState<{ text: string; endsOn: string | null } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      productsApi
+        .getActivePromotion()
+        .then((r) => {
+          if (cancelled) return;
+          const d = r.data?.data;
+          setPromoBanner(d?.showBanner ? { text: d.bannerText, endsOn: d.endsOn || null } : null);
+        })
+        .catch(() => {
+          // banner is decoration — never block the till over it
+        });
+    load();
+    const iv = setInterval(load, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, []);
   // Bumped when a product's trade price is edited, to re-fetch the rates.
   const [tradeRefreshKey, setTradeRefreshKey] = useState(0);
   // Minimum margin over cost — a setting (20% since 29 Sep 2026).
@@ -592,7 +616,28 @@ export default function POSPage() {
   // by building a productId→stockQty map here and passing it through.
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col h-full">
+      {/* Running promotion (Avi, 7 Oct 2026: "a red strip running on top
+          about the ongoing promotion"). Text and on/off live in
+          Settings -> Trade Pricing -> Fan Promotion. */}
+      {promoBanner && (
+        <div
+          className="shrink-0 bg-red-600 text-white text-center font-bold tracking-wide px-4 py-2 text-sm md:text-base shadow-md"
+          role="status"
+        >
+          {promoBanner.text}
+          {promoBanner.endsOn && (
+            <span className="font-semibold">
+              {' '}· Ends{' '}
+              {new Date(promoBanner.endsOn + 'T00:00:00').toLocaleDateString('en-AU', {
+                day: 'numeric',
+                month: 'long',
+              })}
+            </span>
+          )}
+        </div>
+      )}
+      <div className="flex flex-1 min-h-0">
       {/* Main Panel */}
       <div className="flex-1 min-w-0 flex flex-col p-4">
         {/* Quote-conversion banner — cart loaded from an open quote. */}
@@ -1204,6 +1249,7 @@ export default function POSPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

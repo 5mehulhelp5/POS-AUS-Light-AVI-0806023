@@ -20,6 +20,10 @@ export interface Promotion {
   // Last day of the promotion (YYYY-MM-DD, store time), or null for
   // open-ended.
   endsOn: string | null;
+  // Red strip across the top of the POS while the promotion runs.
+  // {percent} in the text is replaced with the discount.
+  showBanner: boolean;
+  bannerText: string;
 }
 
 export const PROMOTION_SETTING_KEY = 'fan_promotion';
@@ -32,6 +36,9 @@ export const DEFAULT_PROMOTION: Promotion = {
   excludeCategories: ['Fan Accesories'],
   excludePrefixes: ['Iconic', 'Artemis', 'Sycamore'],
   endsOn: null,
+  showBanner: true,
+  bannerText:
+    'FAN PROMOTION — {percent}% OFF ALL FANS AT CHECKOUT · Excludes fans already on sale, clearance and Iconic fans',
 };
 
 const list = (v: unknown, fallback: string[]): string[] => {
@@ -58,5 +65,10 @@ export function normalisePromotion(raw: unknown): Promotion {
     excludeCategories: list(r.excludeCategories, DEFAULT_PROMOTION.excludeCategories),
     excludePrefixes: list(r.excludePrefixes, DEFAULT_PROMOTION.excludePrefixes),
     endsOn: ends,
+    showBanner: r.showBanner === undefined ? DEFAULT_PROMOTION.showBanner : r.showBanner === true,
+    bannerText:
+      typeof r.bannerText === 'string' && r.bannerText.trim()
+        ? r.bannerText.trim().slice(0, 300)
+        : DEFAULT_PROMOTION.bannerText,
   };
 }
