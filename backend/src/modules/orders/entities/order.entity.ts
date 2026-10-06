@@ -273,6 +273,13 @@ export class Order {
   @Column({ name: 'legacy_file', type: 'varchar', length: 255, nullable: true })
   legacyFile: string | null;
 
+  // Sold at trade pricing (trade customer, or the cashier switched the
+  // sale to Trade). Recorded per order for the trade reports; orders
+  // before Oct 2026 were back-filled from the customer's trade flag.
+  @Index()
+  @Column({ name: 'is_trade', type: 'boolean', default: false })
+  isTrade: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

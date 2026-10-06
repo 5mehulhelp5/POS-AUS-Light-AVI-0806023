@@ -674,6 +674,7 @@ export class OrdersService {
       const order = queryRunner.manager.create(Order, {
         orderNumber,
         customerId: dto.customerId || null,
+        isTrade: isTradeOrder,
         userId,
         subtotal: validation.calculatedTotals.subtotal,
         discountAmount: validation.calculatedTotals.totalDiscount,
