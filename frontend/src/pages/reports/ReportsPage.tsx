@@ -53,7 +53,7 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="h-full p-6 space-y-4 overflow-auto">
       <h1 className="text-2xl font-bold">Reports</h1>
 
       <div className="flex gap-1 overflow-x-auto pb-1">
