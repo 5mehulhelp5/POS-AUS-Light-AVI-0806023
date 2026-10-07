@@ -489,7 +489,7 @@ export class ReportsService {
       params,
     );
     const [un] = await this.dataSource.query(
-      `SELECT COUNT(*) lines, COALESCE(SUM(oi.row_total),0) revenue
+      `SELECT COUNT(*) lineCount, COALESCE(SUM(oi.row_total),0) revenue
          FROM order_items oi JOIN orders o ON o.id = oi.order_id
         WHERE ${COUNTED} AND ${ch}${trade} AND ${this.inRange('o.created_at')}
           AND oi.product_id IS NULL AND oi.sku = ''`,
@@ -516,7 +516,7 @@ export class ReportsService {
         };
       }),
       // Old-invoice lines are free text with no product code.
-      unitemised: { lines: n(un.lines), revenue: r2(n(un.revenue)) },
+      unitemised: { lines: n(un.lineCount), revenue: r2(n(un.revenue)) },
     };
   }
 
@@ -653,11 +653,18 @@ export class ReportsService {
         ORDER BY o.created_at`,
     );
     const now = Date.now();
-    const clean = (s: string | null) => (s || '').replace(/\s+-\s+.*$/, '').trim();
+    // One name per supplier: "Havit Lighting - Major Stockist in
+    // Victoria", "Havit Lighting" and "Havit" all group as "Havit".
+    const clean = (s: string | null): string => {
+      let v = (s || '').replace(/\s+-\s+.*$/, '').trim();
+      v = v.replace(/\s+(lighting|fans|lamps|costprice|for trade)$/i, '').trim();
+      return v ? v.charAt(0).toUpperCase() + v.slice(1) : '';
+    };
     const groups = new Map<string, any>();
     for (const x of rows) {
-      const supplier =
-        clean(x.listSupplier) || clean(x.brandCategory) || (String(x.name || '').trim().split(/\s+/)[0] || '') || 'Unknown supplier';
+      // No guessing from the product name: custom items ("12W driver")
+      // and products on no supplier list go under Unknown supplier.
+      const supplier = clean(x.listSupplier) || clean(x.brandCategory) || 'Unknown supplier';
       const qty = n(x.qty);
       const unit = n(x.origQty) ? n(x.rowTotal) / n(x.origQty) : 0;
       const line = {
@@ -675,13 +682,16 @@ export class ReportsService {
         qty,
         value: r2(unit * qty),
       };
-      const g = groups.get(supplier) || { supplier, lines: [] as any[], units: 0, value: 0 };
+      const key = supplier.toLowerCase();
+      const g = groups.get(key) || { supplier, lines: [] as any[], units: 0, value: 0 };
       g.lines.push(line);
       g.units += qty;
       g.value = r2(g.value + line.value);
-      groups.set(supplier, g);
+      groups.set(key, g);
     }
-    const list = [...groups.values()].sort((a, b) => a.supplier.localeCompare(b.supplier));
+    const list = [...groups.values()].sort((a, b) =>
+      a.supplier === 'Unknown supplier' ? 1 : b.supplier === 'Unknown supplier' ? -1 : a.supplier.localeCompare(b.supplier),
+    );
     return {
       suppliers: list,
       totals: {

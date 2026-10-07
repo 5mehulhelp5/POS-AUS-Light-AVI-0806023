@@ -381,7 +381,30 @@ export const reportsApi = {
 
   getQuotesReport: (params: { dateFrom: string; dateTo: string }) =>
     api.get('/reports/quotes', { params }),
+
+  // ---- Oct 2026 report suite. Dates are YYYY-MM-DD store days.
+  summary: (params: ReportRange & { tradeOnly?: boolean }) => api.get('/reports/summary', { params }),
+  eod: () => api.get('/reports/eod'),
+  closeDay: (body: { cashCounted?: number | null; notes?: string }) => api.post('/reports/eod/close', body),
+  eodHistory: (limit = 60) => api.get('/reports/eod/history', { params: { limit } }),
+  eodOne: (id: number) => api.get(`/reports/eod/${id}`),
+  profitLoss: (params: ReportRange) => api.get('/reports/profit-loss', { params }),
+  clearance: (params: ReportRange) => api.get('/reports/clearance', { params }),
+  items: (params: ReportRange & { search?: string; tradeOnly?: boolean; limit?: number }) =>
+    api.get('/reports/items', { params }),
+  trade: (params: ReportRange) => api.get('/reports/trade', { params }),
+  staff: (params: ReportRange) => api.get('/reports/staff', { params }),
+  customers: (params: ReportRange & { limit?: number }) => api.get('/reports/customers', { params }),
+  customerHistory: (id: number) => api.get(`/reports/customers/${id}/history`),
+  backorders: () => api.get('/reports/backorders'),
 };
+
+export interface ReportRange {
+  from: string;
+  to: string;
+  channel?: 'store' | 'pos' | 'web' | 'all';
+  groupBy?: 'day' | 'week' | 'month' | 'year';
+}
 
 // Settings API (Admin only)
 export const settingsApi = {
