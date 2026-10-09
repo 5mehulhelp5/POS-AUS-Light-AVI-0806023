@@ -1013,7 +1013,11 @@ export default function PaymentModal({
         (typeof body === 'string' ? body : null) ||
         error?.message ||
         'Failed to process payment';
-      toast.error(String(msg).slice(0, 300));
+      // The below-margin block names the items (Sally, 8 Oct 2026) — keep
+      // it on screen long enough to read.
+      const belowMargin =
+        body?.code === 'BELOW_COST_FLOOR' || body?.error?.code === 'BELOW_COST_FLOOR';
+      toast.error(String(msg).slice(0, 500), belowMargin ? { duration: 15000 } : undefined);
     } finally {
       // Always drop out of the processing state. Previously this only
       // ran in the catch, so the success path left isProcessing stuck

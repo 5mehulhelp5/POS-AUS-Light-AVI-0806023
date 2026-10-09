@@ -4,6 +4,8 @@ import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import {
   isProductOnSale,
   effectiveProductPrice,
+  tradeNetPrice,
+  TradeInfo,
 } from '../../../store/slices/productsSlice';
 
 interface Product {
@@ -24,8 +26,8 @@ interface ProductGridProps {
   products: Product[];
   isLoading: boolean;
   onSelect: (product: Product) => void;
-  // productId -> trade auto-discount percent (for the yellow trade tag)
-  tradePctMap?: Record<number, number>;
+  // productId -> trade auto-discount (for the yellow trade tag)
+  tradeMap?: Record<number, TradeInfo>;
   // Override the red "SALE" badge text — e.g. "CLEARANCE" when viewing
   // the Warehouse Clearance category. Defaults to "SALE".
   saleBadgeLabel?: string;
@@ -35,7 +37,7 @@ export default function ProductGrid({
   products,
   isLoading,
   onSelect,
-  tradePctMap = {},
+  tradeMap = {},
   saleBadgeLabel = 'SALE',
 }: ProductGridProps) {
   if (isLoading) {
@@ -64,17 +66,14 @@ export default function ProductGrid({
           // price exists; category-sale items show their normal price.
           const priceSale = isProductOnSale(product);
           const onSale = priceSale || (product as any).isOnSale === true;
-          // Trade price is always computed off the fixed retail
-          // (product.price), even when the item is on SALE — the trade
-          // discount does not stack on top of the sale discount.
-          // Customer-price-wins: when a deep sale undercuts the trade
-          // rate, trade pays the sale price — hide the (dearer) trade
-          // badge so it can't mislead the cashier.
-          const tradePct = tradePctMap[product.id] || 0;
-          let tradePrice =
-            tradePct > 0
-              ? Math.round(Number(product.price) * (1 - tradePct / 100) * 100) / 100
-              : null;
+          // Trade price: the rule's % off the sale price when the rule
+          // says so (all default rules since 8 Oct 2026), else off the
+          // fixed retail. Customer-price-wins: when the sale price still
+          // undercuts it, trade pays the sale price — hide the (dearer)
+          // trade badge so it can't mislead the cashier.
+          const tradeInfo = tradeMap[product.id];
+          const tradePct = tradeInfo?.percent || 0;
+          let tradePrice = tradeNetPrice(product, tradeInfo);
           if (tradePrice != null && effectiveProductPrice(product) <= tradePrice) {
             tradePrice = null;
           }
@@ -168,7 +167,9 @@ export default function ProductGrid({
                 {tradePrice !== null && (
                   <span
                     className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40"
-                    title={`Trade price (${fmtPct(tradePct)}% off)`}
+                    title={`Trade price (${fmtPct(tradePct)}% off ${
+                      tradeInfo?.baseOnSpecialPrice && priceSale ? 'the sale price' : 'retail'
+                    })`}
                   >
                     Trade ${tradePrice.toFixed(2)}
                   </span>

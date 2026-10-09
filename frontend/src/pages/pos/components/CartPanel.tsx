@@ -14,6 +14,7 @@ import {
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import { CartItem, CartDiscount } from '../../../store/slices/cartSlice';
+import type { TradeInfo } from '../../../store/slices/productsSlice';
 import { competitorApi, customersApi } from '../../../services/api';
 import { fmtPct } from '../../../utils/pricingConfig';
 import { effectiveLineDiscount, lineDiscountSource } from '../../../store/slices/cartSlice';
@@ -30,9 +31,13 @@ interface CartPanelProps {
   maxDiscountPercent: number;
   canStackDiscounts: boolean;
   stockMap?: Record<number, number>; // productId -> available stock
-  // Trade auto-discount % keyed by productId — used to render the yellow
+  // Trade auto-discount keyed by productId — used to render the yellow
   // "Trade $X" tag next to each line's unit price.
-  tradePctMap?: Record<number, number>;
+  tradeMap?: Record<number, TradeInfo>;
+  // Products whose own selling price is already under cost + minimum
+  // margin (server flag — no cost involved). Lets sales staff, who can't
+  // see costs, know before checkout that a manager is needed.
+  belowMarginIds?: number[];
   // Wholesale cost keyed by productId (manager/admin only — the backend
   // omits it from the product API for other roles, so this map is simply
   // empty for them). When a line's actual sell price falls below
@@ -66,7 +71,8 @@ export default function CartPanel({
   maxDiscountPercent,
   canStackDiscounts,
   stockMap = {},
-  tradePctMap = {},
+  tradeMap = {},
+  belowMarginIds = [],
   costMap = {},
   minMarginPercent = 20,
   onRemoveItem,
@@ -424,7 +430,7 @@ export default function CartPanel({
                         })()
                       )}
                       {(() => {
-                        const pct = tradePctMap[item.productId] || 0;
+                        const pct = tradeMap[item.productId]?.percent || 0;
                         if (pct <= 0) return null;
                         // Line switched to the customer price because the
                         // trade rate was dearer (customer-price-wins) —
@@ -600,7 +606,21 @@ export default function CartPanel({
                           not the pre-discount unitPrice. */}
                       {(() => {
                         const cost = costMap[item.productId];
-                        if (!cost || cost <= 0) return null;
+                        if (!cost || cost <= 0) {
+                          // No cost on hand (sales staff, or a product not
+                          // on the current grid page): fall back to the
+                          // server's yes/no flag for the product's own
+                          // price (Sally, 8 Oct 2026, S9065TC).
+                          if (item.priceEdited || !belowMarginIds.includes(item.productId)) {
+                            return null;
+                          }
+                          return (
+                            <div className="mt-2 flex items-center gap-1 text-red-400 text-xs font-semibold">
+                              <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
+                              <span>Below minimum margin — a manager or admin must put this sale through</span>
+                            </div>
+                          );
+                        }
                         const floor = cost * (1 + minMarginPercent / 100);
                         const sellPrice = item.rowTotal / item.quantity;
                         if (sellPrice >= floor - 0.005) return null;

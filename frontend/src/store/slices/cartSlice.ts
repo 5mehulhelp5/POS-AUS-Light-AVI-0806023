@@ -357,7 +357,10 @@ const cartSlice = createSlice({
     setTradeAutoDiscounts: (
       state,
       action: PayloadAction<
-        Record<number, { percent: number; label: string | null }>
+        Record<
+          number,
+          { percent: number; label: string | null; baseOnSpecialPrice?: boolean }
+        >
       >,
     ) => {
       const map = action.payload || {};
@@ -365,25 +368,29 @@ const cartSlice = createSlice({
         const hit = map[it.productId];
         let pct = hit ? hit.percent : 0;
         let label = hit ? (hit.label as string | null) : null;
-        // Customer-price-wins (Sally row 367): when the trade rate off
-        // the fixed retail base still lands ABOVE what a walk-in would
-        // pay (deep sale), charge the customer price and drop the trade
-        // discount. Re-derives from the captured bases each time, so it
-        // works whether the trade customer was attached before or after
-        // the item was added. Skips cashier-re-priced lines.
+        // The rate comes off the sale price when the rule says so (all
+        // default rules since 8 Oct 2026), else off the fixed retail — a
+        // trade price set on the product is a % off retail.
+        // Customer-price-wins (Sally row 367): when the trade rate still
+        // lands ABOVE what a walk-in would pay (deep sale, or the margin
+        // floor), charge the customer price and drop the trade discount.
+        // Re-derives from the captured bases each time, so it works
+        // whether the trade customer was attached before or after the
+        // item was added. Skips cashier-re-priced lines.
         if (
           hit &&
           !it.priceEdited &&
           it.tradeBasePrice != null &&
           it.retailSalePrice != null
         ) {
-          const tradeNet = it.tradeBasePrice * (1 - pct / 100);
+          const base = hit.baseOnSpecialPrice ? it.retailSalePrice : it.tradeBasePrice;
+          const tradeNet = base * (1 - pct / 100);
           if (it.retailSalePrice < tradeNet) {
             it.unitPrice = it.retailSalePrice;
             pct = 0;
             label = null;
           } else {
-            it.unitPrice = it.tradeBasePrice;
+            it.unitPrice = base;
           }
         }
         it.autoDiscountPercent = pct;

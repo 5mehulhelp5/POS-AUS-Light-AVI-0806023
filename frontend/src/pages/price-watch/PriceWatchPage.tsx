@@ -17,6 +17,7 @@ const COMPETITOR_LABELS: Record<string, string> = {
   lights4less: 'Lights4Less',
   lightingillusions: 'Lighting Illusions',
   ceilingfansdirect: 'CF Direct',
+  harveynormanlighting: 'Harvey Norman Lighting',
   ceilingfanswarehouse: 'CF Warehouse',
 };
 

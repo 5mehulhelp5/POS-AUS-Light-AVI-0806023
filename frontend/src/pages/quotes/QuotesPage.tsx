@@ -56,6 +56,21 @@ interface QuoteLineItem {
   // Supplier cost, only present for manager/admin (the products API
   // strips it for sales staff). Drives the below-margin warning.
   cost?: number | null;
+  // Custom line — no catalogue product (Sally, 8 Oct 2026).
+  isCustom?: boolean;
+  // The user typed this line's price or Disc % — it stays exactly as
+  // entered and the trade auto-discount no longer applies on top (Sally,
+  // 8 Oct 2026: "change to $69.00 but total price is $72.76 ... can not
+  // clear the discount %").
+  priceOverridden?: boolean;
+  // Fixed retail and sale-aware price captured when the product was
+  // added, so the line can be re-based when the trade rates land or the
+  // buyer type flips.
+  retailPrice?: number;
+  salePrice?: number;
+  // Line loaded from a saved quote: keeps its quoted price rather than
+  // being re-priced to today's catalogue (until "reset price").
+  fromQuote?: boolean;
 }
 
 // Minimum margin over cost is a setting (see utils/pricingConfig).
@@ -87,6 +102,9 @@ export default function QuotesPage() {
   const [productSearch, setProductSearch] = useState('');
   const [productResults, setProductResults] = useState<any[]>([]);
   const [lineItems, setLineItems] = useState<QuoteLineItem[]>([]);
+  // Bumped to re-run the trade preview without a product-set change
+  // (reset price, or product prices loaded for an edited quote).
+  const [previewNonce, setPreviewNonce] = useState(0);
   const [quoteNotes, setQuoteNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -167,11 +185,18 @@ export default function QuotesPage() {
   useEffect(() => {
     if (lineItems.length === 0) return;
     if (quoteBuyerType !== 'trade') {
-      // Clear any previously-applied auto values so total recomputes.
+      // Clear any previously-applied auto values so total recomputes,
+      // and put untouched lines back on the customer (sale) price.
       setLineItems((prev) =>
-        prev.some((li) => (li.autoDiscountPercent || 0) > 0)
+        prev.some(
+          (li) =>
+            (li.autoDiscountPercent || 0) > 0 ||
+            (!li.priceOverridden && !li.fromQuote && li.salePrice != null && li.price !== li.salePrice),
+        )
           ? prev.map((li) => ({
               ...li,
+              price:
+                !li.priceOverridden && !li.fromQuote && li.salePrice != null ? li.salePrice : li.price,
               autoDiscountPercent: 0,
               autoDiscountLabel: null,
             }))
@@ -197,15 +222,38 @@ export default function QuotesPage() {
         if (cancelled) return;
         const map: Record<
           number,
-          { percent: number; label: string | null }
+          { percent: number; label: string | null; baseOnSpecialPrice?: boolean }
         > = r.data?.data?.discounts || {};
         setLineItems((prev) =>
           prev.map((li) => {
             const hit = map[li.productId];
+            let pct = hit ? hit.percent : 0;
+            let label = hit ? hit.label : null;
+            let price = li.price;
+            // Same base rule as the till: the % comes off the sale price
+            // when the trade rule says so, else off the fixed retail; if
+            // that still beats the customer price, the customer price
+            // wins. Lines the user re-priced keep their price.
+            if (
+              !li.priceOverridden &&
+              !li.fromQuote &&
+              li.retailPrice != null &&
+              li.salePrice != null
+            ) {
+              const base = hit?.baseOnSpecialPrice ? li.salePrice : li.retailPrice;
+              if (li.salePrice < base * (1 - pct / 100)) {
+                price = li.salePrice;
+                pct = 0;
+                label = null;
+              } else {
+                price = base;
+              }
+            }
             return {
               ...li,
-              autoDiscountPercent: hit ? hit.percent : 0,
-              autoDiscountLabel: hit ? hit.label : null,
+              price,
+              autoDiscountPercent: pct,
+              autoDiscountLabel: label,
             };
           }),
         );
@@ -224,6 +272,7 @@ export default function QuotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     quoteBuyerType,
+    previewNonce,
     lineItems
       .map((li) => li.productId)
       .sort()
@@ -305,23 +354,20 @@ export default function QuotesPage() {
   const addLineItem = (product: any) => {
     // Don't add duplicate
     if (lineItems.find((li) => li.productId === product.id)) return;
-    // Trade base is always fixed retail so the auto trade discount
-    // doesn't stack on top of an active SALE price. Retail uses the
-    // sale price when active.
-    const basePrice =
-      quoteBuyerType === 'trade'
-        ? Number(product.price)
-        : effectiveProductPrice(product);
+    // Starts on the customer (sale) price; for a trade quote the preview
+    // effect re-bases it onto whatever the trade rule prices from.
     setLineItems([
       ...lineItems,
       {
         productId: product.id,
         name: product.name,
         sku: product.sku,
-        price: basePrice,
+        price: effectiveProductPrice(product),
         quantity: 1,
         discountPercent: 0,
         cost: product.cost != null ? Number(product.cost) : null,
+        retailPrice: Number(product.price),
+        salePrice: effectiveProductPrice(product),
       },
     ]);
     setProductSearch('');
@@ -340,6 +386,8 @@ export default function QuotesPage() {
         price,
         quantity: 1,
         discountPercent: 0,
+        isCustom: true,
+        priceOverridden: true,
       },
     ]);
     setShowCustomItem(false);
@@ -350,8 +398,36 @@ export default function QuotesPage() {
 
   const updateLineItem = (index: number, field: keyof QuoteLineItem, value: number) => {
     const updated = [...lineItems];
-    (updated[index] as any)[field] = value;
+    const line = { ...updated[index], [field]: value };
+    if (field === 'price') {
+      // A typed price is the price — no trade % on top of it.
+      line.priceOverridden = true;
+      line.discountPercent = 0;
+    } else if (field === 'discountPercent') {
+      // A typed Disc % replaces the trade rate, including clearing it to 0.
+      line.priceOverridden = true;
+    }
+    updated[index] = line;
     setLineItems(updated);
+  };
+
+  // Undo a typed price: back to the automatic price for this line. The
+  // preview effect then re-bases it (trade rate, customer-price-wins).
+  const resetLinePrice = (index: number) => {
+    setLineItems((prev) =>
+      prev.map((li, i) =>
+        i === index
+          ? {
+              ...li,
+              priceOverridden: false,
+              fromQuote: false,
+              discountPercent: 0,
+              price: li.salePrice ?? li.price,
+            }
+          : li,
+      ),
+    );
+    setPreviewNonce((n) => n + 1);
   };
 
   const removeLineItem = (index: number) => {
@@ -361,7 +437,9 @@ export default function QuotesPage() {
   // Effective discount per line — cashier override wins when higher,
   // trade auto-discount wins otherwise. Mirrors the backend save logic.
   const effectiveDiscount = (item: QuoteLineItem) =>
-    Math.max(item.discountPercent || 0, item.autoDiscountPercent || 0);
+    item.priceOverridden
+      ? item.discountPercent || 0
+      : Math.max(item.discountPercent || 0, item.autoDiscountPercent || 0);
 
   const getLineTotal = (item: QuoteLineItem) => {
     const sub = item.price * item.quantity;
@@ -375,8 +453,10 @@ export default function QuotesPage() {
       (sum, li) => sum + li.price * li.quantity * (effectiveDiscount(li) / 100),
       0,
     );
-  const getQuoteTax = () => (getQuoteSubtotal() - getQuoteDiscount()) * 0.1;
-  const getQuoteTotal = () => getQuoteSubtotal() - getQuoteDiscount() + getQuoteTax();
+  // Prices are GST-inclusive (same as the till and the saved quote): GST
+  // is the 1/11th already inside the total, never 10% added on top.
+  const getQuoteTax = () => (getQuoteSubtotal() - getQuoteDiscount()) / 11;
+  const getQuoteTotal = () => getQuoteSubtotal() - getQuoteDiscount();
 
   const handleCreateQuote = async () => {
     if (lineItems.length === 0) {
@@ -411,12 +491,17 @@ export default function QuotesPage() {
       }
       const payload = {
         customerId: selectedCustomer?.id || undefined,
-        items: lineItems.map((li) => ({
-          productId: li.productId,
-          quantity: li.quantity,
-          unitPrice: li.price,
-          discountPercent: li.discountPercent || 0,
-        })),
+        items: lineItems.map((li) => {
+          const isCustom = !!li.isCustom || !(li.productId > 0);
+          return {
+            productId: isCustom ? null : li.productId,
+            quantity: li.quantity,
+            unitPrice: li.price,
+            discountPercent: li.discountPercent || 0,
+            priceOverridden: !!li.priceOverridden,
+            ...(isCustom ? { isCustom: true, sku: li.sku, name: li.name } : {}),
+          };
+        }),
         notes: quoteNotes || undefined,
         buyerType: quoteBuyerType,
       };
@@ -511,13 +596,17 @@ export default function QuotesPage() {
     setEditingQuoteId(quote.id);
     setSelectedCustomer(quote.customer || null);
     setLineItems(
-      (quote.items || []).map((item: any) => ({
-        productId: item.productId,
+      (quote.items || []).map((item: any, i: number) => ({
+        // Custom lines have no product — give them a temporary id.
+        productId: item.productId ?? -(Date.now() + i),
+        isCustom: item.productId == null,
         name: item.name,
         sku: item.sku,
         price: parseFloat(item.unitPrice),
         quantity: item.quantity,
         discountPercent: parseFloat(item.discountPercent),
+        priceOverridden: item.productId == null || !!item.priceOverridden,
+        fromQuote: item.productId != null,
       })),
     );
     setQuoteNotes(quote.notes || '');
@@ -525,6 +614,38 @@ export default function QuotesPage() {
     setCreateError('');
     setSelectedQuote(null);
     setShowCreateModal(true);
+    // Load each product's current retail / sale price (and cost, for the
+    // margin warning) so untouched lines price like newly added ones.
+    const ids: number[] = (quote.items || [])
+      .map((it: any) => Number(it.productId))
+      .filter((id: number) => id > 0);
+    if (ids.length > 0) {
+      Promise.all(
+        ids.map((id) =>
+          productsApi
+            .getProduct(id)
+            .then((r) => r.data?.data?.product ?? null)
+            .catch(() => null),
+        ),
+      ).then((prods) => {
+        const byId = new Map<number, any>();
+        prods.forEach((p: any) => p && byId.set(Number(p.id), p));
+        setLineItems((prev) =>
+          prev.map((li) => {
+            const p = byId.get(li.productId);
+            return p
+              ? {
+                  ...li,
+                  retailPrice: Number(p.price),
+                  salePrice: effectiveProductPrice(p),
+                  cost: p.cost != null ? Number(p.cost) : li.cost,
+                }
+              : li;
+          }),
+        );
+        setPreviewNonce((n) => n + 1);
+      });
+    }
   };
 
   // Convert = load the quote into the POS cart and finish it like any
@@ -927,7 +1048,7 @@ export default function QuotesPage() {
                     </div>
                   )}
                   <div className="flex justify-between text-sm">
-                    <span>GST (10%)</span>
+                    <span>GST included</span>
                     <span>${parseFloat(selectedQuote.taxAmount).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-lg mt-2">
@@ -1569,7 +1690,8 @@ export default function QuotesPage() {
                             value={effectiveDiscount(item)}
                             onChange={(e) => updateLineItem(idx, 'discountPercent', Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                           />
-                          {(item.autoDiscountPercent || 0) > 0 &&
+                          {!item.priceOverridden &&
+                            (item.autoDiscountPercent || 0) > 0 &&
                             (item.autoDiscountPercent || 0) >=
                               (item.discountPercent || 0) && (
                               <p
@@ -1579,6 +1701,16 @@ export default function QuotesPage() {
                                 trade auto
                               </p>
                             )}
+                          {item.priceOverridden && !item.isCustom && (
+                            <button
+                              type="button"
+                              className="block mx-auto text-[10px] text-primary-400 hover:underline mt-1"
+                              title="Go back to the automatic price for this line"
+                              onClick={() => resetLinePrice(idx)}
+                            >
+                              reset price
+                            </button>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right font-medium">
                           ${getLineTotal(item).toFixed(2)}
@@ -1609,7 +1741,7 @@ export default function QuotesPage() {
                     </div>
                   )}
                   <div className="flex justify-between px-3">
-                    <span className="text-gray-400">GST (10%)</span>
+                    <span className="text-gray-400">GST included</span>
                     <span>${getQuoteTax().toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between px-3 font-bold text-lg pt-1 border-t border-gray-700">
@@ -2061,7 +2193,7 @@ export default function QuotesPage() {
                     </div>
                   )}
                   <div className="flex justify-between py-1">
-                    <span>GST (10%)</span>
+                    <span>GST included</span>
                     <span>${parseFloat(printingQuote.taxAmount).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between py-2 border-t-2 border-gray-800 font-bold text-lg">

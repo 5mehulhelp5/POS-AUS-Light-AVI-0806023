@@ -1,10 +1,13 @@
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
+import { useSelector } from 'react-redux';
+import type { RootState } from '../../store';
 import { reportsApi, ReportRange } from '../../services/api';
 import {
   money, int, pct, change, dateTime, dateOnly, periodLabel, presetRange, PRESETS, Preset,
-  StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col,
+  StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col, ymd,
 } from './reportKit';
+import PurchaseOrderEditor from './PurchaseOrder';
 
 // Reports suite (Sally, Oct 2026). Every tab reads the same filter bar
 // except End of Day (the till since its last close) and Backorders
@@ -732,14 +735,54 @@ function CustomerHistory({ id, onClose }: { id: number; onClose: () => void }) {
 type BoLine = {
   lineId: number; orderNumber: string; orderedAt: string; daysWaiting: number; status: string;
   customer: string; company: string | null; phone: string | null; sku: string; name: string; qty: number; value: number;
+  // Ex GST (Sally, 8 Oct 2026: wholesalers' minimum orders). Null = no cost known.
+  unitCostEx: number | null; costEx: number | null;
 };
-type BoGroup = { supplier: string; lines: BoLine[]; units: number; value: number };
+type BoGroup = { supplier: string; lines: BoLine[]; units: number; value: number; costEx: number; linesWithoutCost: number };
+
+// Melbourne calendar day of an ISO timestamp, for the date filter.
+const localDay = (iso: string) => ymd(new Date(iso));
 
 function Backorders() {
   const { data, loading, error, reload } = useReport<{ suppliers: BoGroup[]; totals: any }>(() => reportsApi.backorders(), []);
+  const me = useSelector((s: RootState) => s.auth.user);
   const [supplier, setSupplier] = useState('all');
+  // Ordered-date filter (Sally, 8 Oct 2026: "Can we filter by Date").
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [printing, setPrinting] = useState(false);
-  const groups = (data?.suppliers || []).filter((g) => supplier === 'all' || g.supplier === supplier);
+  const [poFor, setPoFor] = useState<BoGroup | null>(null);
+
+  // Date filter first, then regroup totals so cards / headers / PO match it.
+  const dated: BoGroup[] = (data?.suppliers || [])
+    .map((g) => {
+      const lines = g.lines.filter((l) => {
+        const d = localDay(l.orderedAt);
+        return (!from || d >= from) && (!to || d <= to);
+      });
+      return {
+        ...g,
+        lines,
+        units: lines.reduce((s, l) => s + l.qty, 0),
+        value: Math.round(lines.reduce((s, l) => s + l.value, 0) * 100) / 100,
+        costEx: Math.round(lines.reduce((s, l) => s + (l.costEx || 0), 0) * 100) / 100,
+        linesWithoutCost: lines.filter((l) => l.costEx == null).length,
+      };
+    })
+    .filter((g) => g.lines.length > 0);
+  const groups = dated.filter((g) => supplier === 'all' || g.supplier === supplier);
+  const all = groups.flatMap((g) => g.lines);
+  const sum = {
+    suppliers: groups.length,
+    lines: all.length,
+    units: all.reduce((s, l) => s + l.qty, 0),
+    value: groups.reduce((s, g) => s + g.value, 0),
+    costEx: groups.reduce((s, g) => s + g.costEx, 0),
+    missing: groups.reduce((s, g) => s + g.linesWithoutCost, 0),
+    oldestDays: all.length ? Math.max(...all.map((l) => l.daysWaiting)) : 0,
+  };
+  const selectedGroup = supplier === 'all' ? null : groups[0] || null;
+
   const lineCols: Col<BoLine>[] = [
     { key: 'o', label: 'Order', value: (r) => r.orderNumber },
     { key: 'd', label: 'Ordered', value: (r) => r.orderedAt, render: (r) => dateOnly(r.orderedAt) },
@@ -752,7 +795,15 @@ function Backorders() {
     { key: 'sku', label: 'SKU', value: (r) => r.sku },
     { key: 'n', label: 'Product', value: (r) => r.name },
     { key: 'q', label: 'Qty', align: 'right', value: (r) => r.qty },
-    { key: 'v', label: 'Value', align: 'right', value: (r) => r.value, render: (r) => money(r.value) },
+    {
+      key: 'uc', label: 'Unit cost ex GST', align: 'right', value: (r) => r.unitCostEx ?? '',
+      render: (r) => (r.unitCostEx != null ? money(r.unitCostEx) : <span className="text-gray-500">—</span>),
+    },
+    {
+      key: 'tc', label: 'Cost ex GST', align: 'right', value: (r) => r.costEx ?? '',
+      render: (r) => (r.costEx != null ? money(r.costEx) : <span className="text-gray-500">—</span>),
+    },
+    { key: 'v', label: 'Sell value', align: 'right', value: (r) => r.value, render: (r) => money(r.value) },
   ];
   const exportAll = () =>
     downloadCsv(
@@ -760,59 +811,119 @@ function Backorders() {
       ['Supplier', ...lineCols.map((c) => c.label)],
       groups.flatMap((g) => g.lines.map((l) => [g.supplier, ...lineCols.map((c) => (c.value ? c.value(l) : ''))])),
     );
+  const groupTitle = (g: BoGroup) =>
+    `${g.supplier} — ${g.lines.length} lines, ${int(g.units)} units, cost ${money(g.costEx)} ex GST` +
+    (g.linesWithoutCost ? ` (${g.linesWithoutCost} without a cost)` : '') +
+    ` · sell ${money(g.value)}`;
   return (
     <State loading={loading} error={error}>
       {data && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <StatCard label="Suppliers" value={int(data.totals.suppliers)} />
-            <StatCard label="Lines on backorder" value={int(data.totals.lines)} />
-            <StatCard label="Units" value={int(data.totals.units)} />
-            <StatCard label="Value" value={money(data.totals.value)} />
-            <StatCard label="Longest wait" value={`${int(data.totals.oldestDays)} days`} tone={data.totals.oldestDays > 30 ? 'bad' : undefined} />
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+            <StatCard label="Suppliers" value={int(sum.suppliers)} />
+            <StatCard label="Lines on backorder" value={int(sum.lines)} />
+            <StatCard label="Units" value={int(sum.units)} />
+            <StatCard
+              label="Cost (ex GST)"
+              value={money(sum.costEx)}
+              sub={sum.missing ? `${sum.missing} line${sum.missing === 1 ? '' : 's'} without a cost` : undefined}
+            />
+            <StatCard label="Sell value" value={money(sum.value)} />
+            <StatCard label="Longest wait" value={`${int(sum.oldestDays)} days`} tone={sum.oldestDays > 30 ? 'bad' : undefined} />
           </div>
           <div className="card p-4 flex flex-wrap items-end gap-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Supplier</label>
               <select className="input w-64" value={supplier} onChange={(e) => setSupplier(e.target.value)}>
                 <option value="all">All suppliers</option>
-                {data.suppliers.map((g) => (
+                {dated.map((g) => (
                   <option key={g.supplier} value={g.supplier}>{g.supplier} ({g.lines.length})</option>
                 ))}
+                {supplier !== 'all' && !dated.some((g) => g.supplier === supplier) && (
+                  <option value={supplier}>{supplier} (0)</option>
+                )}
               </select>
             </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Ordered from</label>
+              <input type="date" className="input" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">to</label>
+              <input type="date" className="input" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+            </div>
+            {(from || to) && (
+              <button className="btn-secondary" onClick={() => { setFrom(''); setTo(''); }}>Clear dates</button>
+            )}
+            <button
+              className="btn-primary"
+              onClick={() => selectedGroup && setPoFor(selectedGroup)}
+              disabled={!selectedGroup}
+              title={selectedGroup ? `Purchase order for ${selectedGroup.supplier}` : 'Pick a supplier first'}
+            >
+              Create Purchase Order
+            </button>
             <button className="btn-secondary" onClick={exportAll} disabled={!groups.length}>Export CSV</button>
             <button className="btn-secondary" onClick={() => setPrinting(true)} disabled={!groups.length}>Print</button>
             <button className="btn-secondary" onClick={reload}>Refresh</button>
           </div>
-          {groups.length === 0 && <div className="card p-6 text-gray-400">Nothing on backorder.</div>}
+          {groups.length === 0 && (
+            <div className="card p-6 text-gray-400">
+              {from || to ? 'Nothing on backorder from those dates.' : 'Nothing on backorder.'}
+            </div>
+          )}
           {groups.map((g) => (
             <DataTable
               key={g.supplier}
-              title={`${g.supplier} — ${g.lines.length} lines, ${int(g.units)} units, ${money(g.value)}`}
+              title={groupTitle(g)}
               rows={g.lines}
               columns={lineCols}
             />
           ))}
           <Note>
             Open backorder items that haven't been marked received, oldest first. The supplier comes from the supplier price list the SKU is on,
-            otherwise the product's brand; custom items with no supplier show under Unknown supplier.
+            otherwise the product's brand; custom items with no supplier show under Unknown supplier. Cost is ex GST — the product's
+            current cost, else the cost when it was sold, else the supplier price list. Pick a supplier and use Create Purchase Order to
+            turn its lines into an editable order.
           </Note>
+          {poFor && (
+            <PurchaseOrderEditor
+              supplier={poFor.supplier}
+              orderedBy={me?.firstName}
+              lines={poFor.lines.map((l) => ({
+                sku: l.sku,
+                name: l.name,
+                qty: l.qty,
+                unitCostEx: l.unitCostEx,
+                customer: l.customer,
+                company: l.company,
+                orderNumber: l.orderNumber,
+              }))}
+              onClose={() => setPoFor(null)}
+            />
+          )}
           {printing && (
             <PrintSheet title="Backorders by supplier" onClose={() => setPrinting(false)}>
-              <p className="mb-4 text-gray-600">Australian Lighting & Fans · printed {dateTime(new Date().toISOString())}</p>
+              <p className="mb-4 text-gray-600">
+                Australian Lighting & Fans · printed {dateTime(new Date().toISOString())}
+                {(from || to) && <> · ordered {from ? dateOnly(from) : 'any time'} to {to ? dateOnly(to) : 'today'}</>}
+              </p>
               {groups.map((g) => (
                 <div key={g.supplier} className="mb-5">
-                  <h3 className="font-bold border-b border-gray-400 mb-1">{g.supplier} — {g.lines.length} lines, {int(g.units)} units</h3>
+                  <h3 className="font-bold border-b border-gray-400 mb-1">
+                    {g.supplier} — {g.lines.length} lines, {int(g.units)} units, cost {money(g.costEx)} ex GST
+                  </h3>
                   <table className="w-full text-xs">
                     <thead><tr className="text-left">
-                      <th className="py-1">Order</th><th>Ordered</th><th>Customer</th><th>Phone</th><th>SKU</th><th>Product</th><th className="text-right">Qty</th>
+                      <th className="py-1">Order</th><th>Ordered</th><th>Customer</th><th>Phone</th><th>SKU</th><th>Product</th>
+                      <th className="text-right">Qty</th><th className="text-right">Cost ex GST</th>
                     </tr></thead>
                     <tbody>
                       {g.lines.map((l) => (
                         <tr key={l.lineId} className="border-t border-gray-200">
                           <td className="py-1">{l.orderNumber}</td><td>{dateOnly(l.orderedAt)}</td><td>{l.customer}</td>
                           <td>{l.phone || ''}</td><td>{l.sku}</td><td>{l.name}</td><td className="text-right">{l.qty}</td>
+                          <td className="text-right">{l.costEx != null ? money(l.costEx) : '—'}</td>
                         </tr>
                       ))}
                     </tbody>

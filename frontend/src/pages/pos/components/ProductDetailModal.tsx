@@ -18,6 +18,8 @@ import { posImage } from '../../../utils/imageUrl';
 import {
   isProductOnSale,
   effectiveProductPrice,
+  tradeNetPrice,
+  TradeInfo,
 } from '../../../store/slices/productsSlice';
 
 interface ProductDetailModalProps {
@@ -35,9 +37,9 @@ interface ProductDetailModalProps {
     thumbnailUrl: string | null;
     brand?: string | null;
   };
-  // Trade auto-discount % keyed by productId, shared from POSPage so the
+  // Trade auto-discount keyed by productId, shared from POSPage so the
   // detail modal can render the same yellow "Trade $X" tag as the grid card.
-  tradePctMap?: Record<number, number>;
+  tradeMap?: Record<number, TradeInfo>;
   // Checkout promotion per product (fans 10%, Oct 2026).
   promoMap?: Record<number, { percent: number; label: string | null }>;
   // Fired after a manager/admin saves a new supplier cost, so the grid's
@@ -69,7 +71,7 @@ type Tab = 'specs' | 'competitors' | 'description';
 export default function ProductDetailModal({
   productId,
   fallbackProduct,
-  tradePctMap,
+  tradeMap,
   promoMap,
   onCostUpdated,
   onTradePriceUpdated,
@@ -323,7 +325,8 @@ export default function ProductDetailModal({
                 );
               })()}
               {(() => {
-                const pct = tradePctMap?.[product.id] || 0;
+                const tradeInfo = tradeMap?.[product.id];
+                const pct = tradeInfo?.percent || 0;
                 const rrp = Number(product.price);
                 const fixedTrade =
                   product.tradePrice != null &&
@@ -331,15 +334,12 @@ export default function ProductDetailModal({
                   Number(product.tradePrice) < rrp
                     ? Number(product.tradePrice)
                     : null;
-                // Trade base is always the fixed retail (product.price)
-                // so trade never stacks on top of an active SALE price.
-                // A price set on the product wins over the % rules.
+                // The rule's % comes off the sale price when the rule says
+                // so (all default rules since 8 Oct 2026, floored at cost
+                // + margin by the server), else off the fixed retail. A
+                // price set on the product wins over the % rules.
                 const tradePrice =
-                  fixedTrade != null
-                    ? fixedTrade
-                    : pct > 0
-                      ? Math.round(rrp * (1 - pct / 100) * 100) / 100
-                      : null;
+                  fixedTrade != null ? fixedTrade : tradeNetPrice(product, tradeInfo);
                 // Customer-price-wins: a deep sale below the trade rate
                 // means trade pays the sale price — hide the dearer badge.
                 const beatenBySale =
@@ -406,7 +406,9 @@ export default function ProductDetailModal({
                 const title =
                   fixedTrade != null
                     ? 'Trade price set for this product'
-                    : `Trade price (${fmtPct(pct)}% off)`;
+                    : `Trade price (${fmtPct(pct)}% off ${
+                        tradeInfo?.baseOnSpecialPrice && onSale ? 'the sale price' : 'retail'
+                      })`;
                 const badge =
                   'text-xs font-bold px-2 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40';
 
@@ -788,21 +790,17 @@ export default function ProductDetailModal({
                 fontFamily: 'Arial, Helvetica, sans-serif',
               }}
             >
-              {/* Left: store, name, SKU */}
+              {/* Left: name, SKU. No store name (Sally, 8 Oct 2026:
+                  "remove 'Australian Lighting & Fans' and make PRICE
+                  BIGGER") — the space goes to the price. */}
               <div className="flex-1 min-w-0 flex flex-col justify-between">
-                <p
-                  className="uppercase text-gray-600 truncate"
-                  style={{ fontSize: '6pt', letterSpacing: '0.12em' }}
-                >
-                  Australian Lighting &amp; Fans
-                </p>
                 <p
                   className="font-bold"
                   style={{
-                    fontSize: '9.5pt',
+                    fontSize: '10pt',
                     lineHeight: 1.15,
                     display: '-webkit-box',
-                    WebkitLineClamp: 3,
+                    WebkitLineClamp: 4,
                     WebkitBoxOrient: 'vertical',
                     overflow: 'hidden',
                   }}
@@ -814,29 +812,37 @@ export default function ProductDetailModal({
                 </p>
               </div>
 
-              {/* Right: price */}
-              <div
-                className="flex flex-col items-end justify-center text-right shrink-0"
-                style={{ paddingLeft: '2mm', minWidth: '28mm' }}
-              >
-                {onSale ? (
-                  <>
-                    <p className="text-gray-600 line-through" style={{ fontSize: '7pt' }}>
-                      ${Number(product.price).toFixed(2)}
+              {/* Right: price, as big as the label allows. The size
+                  steps down with the number of characters so a four-
+                  figure price still fits beside the name. */}
+              {(() => {
+                const shown = Number(onSale ? product.specialPrice : product.price);
+                const text = `$${shown.toFixed(2)}`;
+                const pt = text.length <= 6 ? 34 : text.length === 7 ? 30 : text.length === 8 ? 26 : 22;
+                return (
+                  <div
+                    className="flex flex-col items-end justify-center text-right shrink-0"
+                    style={{ paddingLeft: '2mm' }}
+                  >
+                    {onSale && (
+                      <p className="text-gray-600 line-through" style={{ fontSize: '9pt' }}>
+                        ${Number(product.price).toFixed(2)}
+                      </p>
+                    )}
+                    <p
+                      className="font-extrabold whitespace-nowrap"
+                      style={{ fontSize: `${pt}pt`, lineHeight: 1, letterSpacing: '-0.02em' }}
+                    >
+                      {text}
                     </p>
-                    <p className="font-extrabold" style={{ fontSize: '20pt', lineHeight: 1 }}>
-                      ${Number(product.specialPrice).toFixed(2)}
-                    </p>
-                    <p className="font-bold uppercase" style={{ fontSize: '7pt', letterSpacing: '0.1em' }}>
-                      Sale
-                    </p>
-                  </>
-                ) : (
-                  <p className="font-extrabold" style={{ fontSize: '20pt', lineHeight: 1 }}>
-                    ${Number(product.price).toFixed(2)}
-                  </p>
-                )}
-              </div>
+                    {onSale && (
+                      <p className="font-bold uppercase" style={{ fontSize: '8pt', letterSpacing: '0.1em' }}>
+                        Sale
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <p className="text-xs text-gray-400 print:hidden">

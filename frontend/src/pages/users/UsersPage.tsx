@@ -8,7 +8,10 @@ import {
   KeyIcon,
   PlusIcon,
   ArrowLeftIcon,
+  PencilSquareIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
 
 interface User {
   id: number;
@@ -30,6 +33,20 @@ interface Role {
   id: number;
   name: string;
   displayName: string;
+  maxDiscountPercent?: number;
+}
+
+// Edit form (admin) — Sally, 8 Oct 2026: "Edit Role button to enable
+// administrators to modify a user's assigned role and permissions".
+// Permissions come with the role (max discount, reports, settings...).
+interface EditForm {
+  firstName: string;
+  lastName: string;
+  email: string;
+  pinCode: string;
+  password: string;
+  roleId: number;
+  isActive: boolean;
 }
 
 export default function UsersPage() {
@@ -41,6 +58,11 @@ export default function UsersPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createError, setCreateError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [editError, setEditError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Form state for new user
   const [newUser, setNewUser] = useState({
@@ -142,6 +164,94 @@ export default function UsersPage() {
       );
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const closeDetail = () => {
+    setSelectedUser(null);
+    setEditForm(null);
+    setEditError('');
+    setConfirmDelete(false);
+  };
+
+  const startEdit = (u: User) => {
+    setEditError('');
+    setConfirmDelete(false);
+    setEditForm({
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email || '',
+      pinCode: u.pinCode || '',
+      password: '',
+      roleId: u.role.id,
+      isActive: u.isActive,
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!selectedUser || !editForm) return;
+    setEditError('');
+    if (!/^\d{4,6}$/.test(editForm.pinCode)) {
+      setEditError('PIN must be 4–6 digits');
+      return;
+    }
+    if (editForm.password && editForm.password.length < 8) {
+      setEditError('A new password needs at least 8 characters');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const payload: any = {
+        firstName: editForm.firstName.trim(),
+        lastName: editForm.lastName.trim(),
+        email: editForm.email.trim() || null,
+        pinCode: editForm.pinCode,
+        roleId: editForm.roleId,
+        isActive: editForm.isActive,
+      };
+      if (editForm.password) payload.password = editForm.password;
+      await usersApi.updateUser(selectedUser.id, payload);
+      toast.success('User updated');
+      const role = roles.find((r) => r.id === editForm.roleId);
+      setSelectedUser({
+        ...selectedUser,
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        email: payload.email,
+        pinCode: payload.pinCode,
+        isActive: payload.isActive,
+        role: role
+          ? {
+              id: role.id,
+              name: role.name,
+              displayName: role.displayName,
+              maxDiscountPercent: Number(role.maxDiscountPercent ?? selectedUser.role.maxDiscountPercent),
+            }
+          : selectedUser.role,
+      });
+      setEditForm(null);
+      fetchUsers();
+    } catch (error: any) {
+      const m = error.response?.data?.message;
+      setEditError(Array.isArray(m) ? m.join(', ') : m || 'Failed to update user');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (!selectedUser) return;
+    setIsDeleting(true);
+    try {
+      const res = await usersApi.deleteUser(selectedUser.id);
+      toast.success(res.data?.message || 'User deleted');
+      closeDetail();
+      fetchUsers();
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to delete user');
+      setConfirmDelete(false);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -281,7 +391,7 @@ export default function UsersPage() {
           <div className="modal-content">
             <div className="flex justify-between items-start mb-4">
               <button
-                onClick={() => setSelectedUser(null)}
+                onClick={closeDetail}
                 className="modal-back-btn"
               >
                 <ArrowLeftIcon className="h-5 w-5" /> Back
@@ -313,6 +423,108 @@ export default function UsersPage() {
               </div>
             </div>
 
+            {editForm ? (
+              <div className="space-y-4">
+                {editError && (
+                  <div className="bg-red-600/20 border border-red-600 text-red-400 px-4 py-2 rounded">
+                    {editError}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">First Name</label>
+                    <input
+                      className="input"
+                      value={editForm.firstName}
+                      onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Last Name</label>
+                    <input
+                      className="input"
+                      value={editForm.lastName}
+                      onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Role</label>
+                  <select
+                    className="input"
+                    value={editForm.roleId}
+                    onChange={(e) => setEditForm({ ...editForm, roleId: Number(e.target.value) })}
+                  >
+                    {roles.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.displayName}
+                        {r.maxDiscountPercent != null ? ` — max discount ${Number(r.maxDiscountPercent)}%` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Permissions come with the role: Sales Staff sell and quote; Managers also see reports,
+                    costs and can approve sales below the minimum margin; Admins can change settings and users.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">PIN Code (4–6 digits)</label>
+                    <input
+                      className="input font-mono tracking-widest"
+                      value={editForm.pinCode}
+                      maxLength={6}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, pinCode: e.target.value.replace(/\D/g, '').slice(0, 6) })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Email (optional)</label>
+                    <input
+                      type="email"
+                      className="input"
+                      value={editForm.email}
+                      onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">New password (leave blank to keep)</label>
+                  <input
+                    type="password"
+                    className="input"
+                    value={editForm.password}
+                    placeholder="Unchanged"
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4"
+                    checked={editForm.isActive}
+                    onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
+                  />
+                  Active (can log in)
+                </label>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    className="px-4 py-2 text-gray-400 hover:text-pos-text"
+                    onClick={() => {
+                      setEditForm(null);
+                      setEditError('');
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button type="button" className="btn-primary" disabled={isSaving} onClick={saveEdit}>
+                    {isSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -351,7 +563,62 @@ export default function UsersPage() {
                   Member since {formatDate(selectedUser.createdAt)}
                 </p>
               </div>
+
+              {/* Admin actions (Sally, 8 Oct 2026) */}
+              {isAdmin && (
+                <div className="border-t border-gray-700 pt-4">
+                  {confirmDelete ? (
+                    <div className="bg-red-600/10 border border-red-600/60 rounded p-3 space-y-3">
+                      <p className="text-sm">
+                        Delete <strong>{selectedUser.firstName} {selectedUser.lastName}</strong>? They won't be able
+                        to log in and will be removed from this list. Sales they've already made stay in Orders and
+                        Reports under their name.
+                      </p>
+                      <div className="flex justify-end gap-3">
+                        <button
+                          type="button"
+                          className="px-4 py-2 text-gray-400 hover:text-pos-text"
+                          onClick={() => setConfirmDelete(false)}
+                          disabled={isDeleting}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-danger"
+                          onClick={deleteSelected}
+                          disabled={isDeleting}
+                        >
+                          {isDeleting ? 'Deleting...' : 'Delete User'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        className="btn-primary flex items-center gap-2"
+                        onClick={() => startEdit(selectedUser)}
+                      >
+                        <PencilSquareIcon className="h-5 w-5" />
+                        Edit Role &amp; Details
+                      </button>
+                      {selectedUser.id !== currentUser?.id && (
+                        <button
+                          type="button"
+                          className="btn-secondary flex items-center gap-2 text-red-500"
+                          onClick={() => setConfirmDelete(true)}
+                        >
+                          <TrashIcon className="h-5 w-5" />
+                          Delete User
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+            )}
           </div>
         </div>
       )}

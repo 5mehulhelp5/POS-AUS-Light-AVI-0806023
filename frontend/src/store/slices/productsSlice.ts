@@ -71,6 +71,33 @@ export function effectiveProductPrice(p: {
   return isProductOnSale(p) ? Number(p.specialPrice) : Number(p.price);
 }
 
+// Trade auto-discount for one product, from the server preview
+// (quotes/trade-discount-preview).
+export interface TradeInfo {
+  percent: number;
+  label?: string | null;
+  // The % comes off the sale-aware price (special price when active)
+  // instead of the fixed retail — every default rule since 8 Oct 2026
+  // (Sally: "Trade price needs to be 20% off the special price").
+  baseOnSpecialPrice?: boolean;
+}
+
+// What a trade customer pays per unit under that rate (null = no rate).
+export function tradeNetPrice(
+  p: {
+    price: number | string | null | undefined;
+    specialPrice: number | string | null | undefined;
+    specialPriceFrom?: Date | string | null;
+    specialPriceTo?: Date | string | null;
+  },
+  info?: TradeInfo | null,
+): number | null {
+  if (!info || !(info.percent > 0)) return null;
+  const base = info.baseOnSpecialPrice ? effectiveProductPrice(p) : Number(p.price);
+  if (!(base > 0)) return null;
+  return Math.round(base * (1 - info.percent / 100) * 100) / 100;
+}
+
 export interface Category {
   id: number;
   magentoId: number;

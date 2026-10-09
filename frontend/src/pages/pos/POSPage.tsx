@@ -13,6 +13,7 @@ import {
   fetchSubcategories,
   isProductOnSale,
   effectiveProductPrice,
+  TradeInfo,
   setProductCost,
   setProductTradePrice,
 } from '../../store/slices/productsSlice';
@@ -148,9 +149,11 @@ export default function POSPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 48;
 
-  // Trade auto-discount % per visible product, used to show a yellow
+  // Trade auto-discount per visible product, used to show a yellow
   // "Trade $X" tag beside the retail price on each grid card.
-  const [tradePctMap, setTradePctMap] = useState<Record<number, number>>({});
+  const [tradeMap, setTradeMap] = useState<Record<number, TradeInfo>>({});
+  // Products whose own price is under cost + minimum margin (server flag).
+  const [belowMarginIds, setBelowMarginIds] = useState<number[]>([]);
   // Checkout promotion per product (fans 10%, Oct 2026) — for the
   // product page badge; cart lines get it via setPromoDiscounts.
   const [promoMap, setPromoMap] = useState<Record<number, { percent: number; label: string | null }>>({});
@@ -389,8 +392,9 @@ export default function POSPage() {
       .filter((id) => Number.isFinite(id) && id > 0);
     const ids = Array.from(new Set([...gridIds, ...cartIds]));
     if (ids.length === 0) {
-      setTradePctMap({});
+      setTradeMap({});
       setPromoMap({});
+      setBelowMarginIds([]);
       return;
     }
     let cancelled = false;
@@ -399,12 +403,19 @@ export default function POSPage() {
       .then((r) => {
         if (cancelled) return;
         const discounts = r.data?.data?.discounts || {};
-        const map: Record<number, number> = {};
+        const map: Record<number, TradeInfo> = {};
         for (const [pid, info] of Object.entries(discounts)) {
           const pct = (info as any)?.percent || 0;
-          if (pct > 0) map[Number(pid)] = pct;
+          if (pct > 0) {
+            map[Number(pid)] = {
+              percent: pct,
+              label: (info as any)?.label ?? null,
+              baseOnSpecialPrice: !!(info as any)?.baseOnSpecialPrice,
+            };
+          }
         }
-        setTradePctMap(map);
+        setTradeMap(map);
+        setBelowMarginIds((r.data?.data?.belowMargin || []) as number[]);
         // Promotion applies to every customer, so the cart takes it here
         // rather than in the trade-only effect below.
         const promos = (r.data?.data?.promos || {}) as Record<number, { percent: number; label: string | null }>;
@@ -531,12 +542,14 @@ export default function POSPage() {
     const outOfStock =
       product.isInStock === false || Number(product.stockQty) <= 0;
     const onSale = isProductOnSale(product);
-    // For trade customers, always use the FIXED RETAIL price as the base
-    // so the auto trade discount doesn't stack on top of a sale price.
-    // For retail customers, use the sale price when active.
-    const unitPrice = cart.customerIsTrade
-      ? Number(product.price)
-      : effectiveProductPrice(product);
+    // Trade customers start on the base their trade rule prices from
+    // (sale price for the default rules, fixed retail for a trade price
+    // set on the product); setTradeAutoDiscounts re-derives it once the
+    // server's rates land. Retail customers pay the sale price when active.
+    const unitPrice =
+      cart.customerIsTrade && !tradeMap[product.id]?.baseOnSpecialPrice
+        ? Number(product.price)
+        : effectiveProductPrice(product);
     for (let i = 0; i < quantity; i++) {
       dispatch(
         addItem({
@@ -952,7 +965,7 @@ export default function POSPage() {
               products={products}
               isLoading={isLoading}
               onSelect={(p) => setDetailProduct(p)}
-              tradePctMap={tradePctMap}
+              tradeMap={tradeMap}
               saleBadgeLabel={
                 /clearance/i.test(activeCategoryName)
                   ? 'WAREHOUSE CLEARANCE'
@@ -993,7 +1006,8 @@ export default function POSPage() {
       {/* Cart Panel */}
       <CartPanel
         items={cart.items}
-        tradePctMap={tradePctMap}
+        tradeMap={tradeMap}
+        belowMarginIds={belowMarginIds}
         subtotal={cart.subtotal}
         discount={cart.itemDiscounts + cart.cartDiscountAmount}
         tax={cart.taxAmount}
@@ -1099,7 +1113,7 @@ export default function POSPage() {
         <ProductDetailModal
           productId={detailProduct.id}
           fallbackProduct={detailProduct}
-          tradePctMap={tradePctMap}
+          tradeMap={tradeMap}
           promoMap={promoMap}
           onCostUpdated={(id, cost) => {
             dispatch(setProductCost({ id, cost }));
