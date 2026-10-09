@@ -12,14 +12,26 @@ import { Product } from '../products/entities/product.entity';
 import { Customer } from '../customers/entities/customer.entity';
 import { TradeDiscountsService } from '../products/trade-discounts.service';
 
+export interface CreateQuoteItemDto {
+  // Catalogue product. Custom lines send isCustom (or a productId <= 0,
+  // the client's temporary id) with their own sku / name / unitPrice.
+  productId: number | null;
+  quantity: number;
+  discountPercent?: number;
+  unitPrice?: number;
+  isCustom?: boolean;
+  sku?: string;
+  name?: string;
+  // The user typed this line's price or discount (Sally, 8 Oct 2026:
+  // "user is wanting to change to $69.00 but total price is $72.76 ...
+  // and user can not clear the discount %"). The line is saved exactly
+  // as entered — no trade auto-discount on top.
+  priceOverridden?: boolean;
+}
+
 export interface CreateQuoteDto {
   customerId?: number;
-  items: Array<{
-    productId: number;
-    quantity: number;
-    discountPercent?: number;
-    unitPrice?: number;
-  }>;
+  items: CreateQuoteItemDto[];
   notes?: string;
   expiryDays?: number;
   buyerType?: QuoteBuyerType;
@@ -53,6 +65,129 @@ export class QuotesService {
 
   private round(value: number): number {
     return Math.round(value * 100) / 100;
+  }
+
+  // Prices every line of a quote. Shared by create() and update().
+  private async buildItems(
+    items: CreateQuoteItemDto[],
+    isTrade: boolean,
+  ): Promise<{
+    quoteItems: Partial<QuoteItem>[];
+    subtotal: number;
+    totalDiscount: number;
+  }> {
+    let subtotal = 0;
+    let totalDiscount = 0;
+    const quoteItems: Partial<QuoteItem>[] = [];
+
+    for (const item of items) {
+      const quantity = Math.max(1, Math.floor(Number(item.quantity) || 1));
+      const manualDiscount = Math.min(100, Math.max(0, Number(item.discountPercent) || 0));
+      const isCustom = !!item.isCustom || !item.productId || Number(item.productId) <= 0;
+
+      let productId: number | null = null;
+      let sku: string;
+      let name: string;
+      let unitPrice: number;
+      let discountPercent: number;
+      let priceOverridden = !!item.priceOverridden;
+
+      if (isCustom) {
+        // Custom item (Sally, 8 Oct 2026: "Product with ID -17914...
+        // not found"). Everything comes from the line; no catalogue
+        // lookup, no trade rule — same as a custom item at the till.
+        const price = Number(item.unitPrice);
+        if (!Number.isFinite(price) || price < 0) {
+          throw new BadRequestException(
+            `Custom item "${item.name || item.sku || ''}" needs a valid price`,
+          );
+        }
+        if (!(item.name || '').trim() && !(item.sku || '').trim()) {
+          throw new BadRequestException('Custom item needs a name');
+        }
+        sku = (item.sku || '').trim().slice(0, 100) || 'CUSTOM';
+        name = ((item.name || '').trim() || sku).slice(0, 255);
+        unitPrice = price;
+        discountPercent = manualDiscount;
+        priceOverridden = true;
+      } else {
+        const product = await this.productRepository.findOne({
+          where: { id: Number(item.productId) },
+          relations: isTrade ? ['categories'] : [],
+        });
+        if (!product) {
+          throw new NotFoundException(`Product with ID ${item.productId} not found`);
+        }
+        productId = product.id;
+        sku = product.sku;
+        name = product.name;
+
+        // Resolve the trade rate first — the base-price choice depends on
+        // what it actually works out to. Mirrors orders.service.ts::create.
+        const auto =
+          isTrade && !priceOverridden
+            ? await this.tradeDiscounts.getAutoDiscount(product)
+            : { percent: 0, label: null, baseOnSpecialPrice: false };
+        const autoTrade = auto.percent;
+
+        // Trade rules flagged baseOnSpecialPrice (all of them since 8 Oct
+        // 2026) apply their % to the sale-aware price; a trade price set
+        // on the product is a % off the fixed retail. If the trade rate
+        // lands ABOVE what a walk-in would pay on a deep sale, the
+        // customer price wins and the trade % is dropped.
+        const retailNet = product.isOnSale
+          ? Number(product.specialPrice)
+          : Number(product.price);
+        const tradeBase = auto.baseOnSpecialPrice
+          ? retailNet
+          : Number(product.price);
+        const tradeNet = tradeBase * (1 - autoTrade / 100);
+        const tradeWins = !isTrade || tradeNet <= retailNet;
+        const defaultPrice = isTrade
+          ? tradeWins
+            ? tradeBase
+            : retailNet
+          : retailNet;
+        // The quote form sends the price it showed; honour it.
+        unitPrice =
+          item.unitPrice != null && Number(item.unitPrice) >= 0
+            ? Number(item.unitPrice)
+            : defaultPrice;
+        // Trade auto-discount is the floor; the user's % only wins when
+        // higher — unless they typed the price / discount themselves, in
+        // which case the line is exactly what they entered.
+        discountPercent = priceOverridden
+          ? manualDiscount
+          : Math.max(manualDiscount, tradeWins ? autoTrade : 0);
+      }
+
+      const lineSubtotal = unitPrice * quantity;
+      const discountAmount = this.round(lineSubtotal * (discountPercent / 100));
+      const lineAfterDiscount = lineSubtotal - discountAmount;
+      // AU prices are GST-inclusive. Extract the GST component
+      // (gross / 11) instead of adding 10% on top — this matches the
+      // convention used by the cart slice and the orders / discount
+      // service so quote conversion doesn't trigger a total mismatch.
+      const lineTax = this.round(lineAfterDiscount / 11);
+      const rowTotal = this.round(lineAfterDiscount); // already gross
+
+      subtotal += lineSubtotal;
+      totalDiscount += discountAmount;
+
+      quoteItems.push({
+        productId,
+        sku,
+        name,
+        quantity,
+        unitPrice,
+        discountPercent,
+        discountAmount,
+        taxAmount: lineTax,
+        rowTotal,
+        priceOverridden,
+      });
+    }
+    return { quoteItems, subtotal, totalDiscount };
   }
 
   private async generateQuoteNumber(): Promise<string> {
@@ -94,88 +229,10 @@ export class QuotesService {
     const buyerType = dto.buyerType || QuoteBuyerType.CUSTOMER;
     const isTrade = buyerType === QuoteBuyerType.TRADE;
 
-    // Build quote items and calculate totals
-    let subtotal = 0;
-    let totalDiscount = 0;
-    const quoteItems: Partial<QuoteItem>[] = [];
-
-    for (const item of dto.items) {
-      const product = await this.productRepository.findOne({
-        where: { id: item.productId },
-        relations: isTrade ? ['categories'] : [],
-      });
-      if (!product) {
-        throw new NotFoundException(`Product with ID ${item.productId} not found`);
-      }
-
-      // Resolve the trade rate first — the base-price choice depends on
-      // what it actually works out to. Mirrors orders.service.ts::create.
-      const auto = isTrade
-        ? await this.tradeDiscounts.getAutoDiscount(product)
-        : { percent: 0, label: null, baseOnSpecialPrice: false };
-      const autoTrade = auto.percent;
-
-      // Trade normally prices off the fixed retail (product.price) even
-      // when the item is on sale — trade % is applied to that base,
-      // preventing a sale-plus-trade double discount. Rules flagged
-      // baseOnSpecialPrice (Ceiling Fans) apply their % to the
-      // sale-aware price instead. Exception: if the trade rate lands
-      // ABOVE what a walk-in would pay on a deep sale, the customer
-      // price wins and the trade % is dropped.
-      const retailNet = product.isOnSale
-        ? Number(product.specialPrice)
-        : Number(product.price);
-      const tradeBase = auto.baseOnSpecialPrice
-        ? retailNet
-        : Number(product.price);
-      const tradeNet = tradeBase * (1 - autoTrade / 100);
-      const tradeWins = !isTrade || tradeNet <= retailNet;
-      const defaultPrice = isTrade
-        ? tradeWins
-          ? tradeBase
-          : retailNet
-        : retailNet;
-      // Allow caller to override unit price (e.g. trade pricing on quotes)
-      const unitPrice =
-        item.unitPrice != null && item.unitPrice >= 0
-          ? Number(item.unitPrice)
-          : defaultPrice;
-      const quantity = item.quantity;
-      const lineSubtotal = unitPrice * quantity;
-
-      const manualDiscount = item.discountPercent || 0;
-      // Trade auto-discount is the floor; cashier override only wins
-      // when it's higher. Keeps the trade customer's entitled rate even
-      // if the cashier forgets to apply anything. Zeroed when the sale
-      // price already beat trade — the base is the sale price there.
-      const discountPercent = Math.max(
-        manualDiscount,
-        tradeWins ? autoTrade : 0,
-      );
-      const discountAmount = this.round(lineSubtotal * (discountPercent / 100));
-      const lineAfterDiscount = lineSubtotal - discountAmount;
-      // AU prices are GST-inclusive. Extract the GST component
-      // (gross / 11) instead of adding 10% on top — this matches the
-      // convention used by the cart slice and the orders / discount
-      // service so quote conversion doesn't trigger a total mismatch.
-      const lineTax = this.round(lineAfterDiscount / 11);
-      const rowTotal = this.round(lineAfterDiscount); // already gross
-
-      subtotal += lineSubtotal;
-      totalDiscount += discountAmount;
-
-      quoteItems.push({
-        productId: product.id,
-        sku: product.sku,
-        name: product.name,
-        quantity,
-        unitPrice,
-        discountPercent,
-        discountAmount,
-        taxAmount: lineTax,
-        rowTotal,
-      });
-    }
+    const { quoteItems, subtotal, totalDiscount } = await this.buildItems(
+      dto.items,
+      isTrade,
+    );
 
     const afterDiscount = subtotal - totalDiscount;
     const taxAmount = this.round(afterDiscount / 11);
@@ -235,86 +292,20 @@ export class QuotesService {
       if (!customer) throw new NotFoundException('Customer not found');
     }
 
-    // Delete existing items (cascade on relation) and recompute
-    await this.quoteItemRepository.delete({ quoteId: id });
-
     // Same trade-discount gating as create() — a quote that's edited
     // into a trade quote should pick up the auto rules too.
     const updatedBuyerType =
       dto.buyerType || existing.buyerType || QuoteBuyerType.CUSTOMER;
     const isTrade = updatedBuyerType === QuoteBuyerType.TRADE;
 
-    let subtotal = 0;
-    let totalDiscount = 0;
-    const quoteItems: Partial<QuoteItem>[] = [];
-
-    for (const item of dto.items) {
-      const product = await this.productRepository.findOne({
-        where: { id: item.productId },
-        relations: isTrade ? ['categories'] : [],
-      });
-      if (!product) {
-        throw new NotFoundException(`Product with ID ${item.productId} not found`);
-      }
-
-      const auto = isTrade
-        ? await this.tradeDiscounts.getAutoDiscount(product)
-        : { percent: 0, label: null, baseOnSpecialPrice: false };
-      const autoTrade = auto.percent;
-      // Trade: base off fixed retail (never the sale price) so trade
-      // % doesn't stack on top of the sale discount — rules flagged
-      // baseOnSpecialPrice (Ceiling Fans) use the sale-aware price
-      // instead — unless the trade rate ends up dearer than the
-      // customer price, in which case the customer price wins and the
-      // trade % is dropped.
-      const retailNet = product.isOnSale
-        ? Number(product.specialPrice)
-        : Number(product.price);
-      const tradeBase = auto.baseOnSpecialPrice
-        ? retailNet
-        : Number(product.price);
-      const tradeNet = tradeBase * (1 - autoTrade / 100);
-      const tradeWins = !isTrade || tradeNet <= retailNet;
-      const defaultPrice = isTrade
-        ? tradeWins
-          ? tradeBase
-          : retailNet
-        : retailNet;
-      const unitPrice =
-        item.unitPrice != null && item.unitPrice >= 0
-          ? Number(item.unitPrice)
-          : defaultPrice;
-      const quantity = item.quantity;
-      const lineSubtotal = unitPrice * quantity;
-      const manualDiscount = item.discountPercent || 0;
-      const discountPercent = Math.max(
-        manualDiscount,
-        tradeWins ? autoTrade : 0,
-      );
-      const discountAmount = this.round(lineSubtotal * (discountPercent / 100));
-      const lineAfterDiscount = lineSubtotal - discountAmount;
-      // AU prices are GST-inclusive — extract the component, don't add
-      // 10% on top. Matches the order/discount convention so converting
-      // a quote produces the same total it shows.
-      const lineTax = this.round(lineAfterDiscount / 11);
-      const rowTotal = this.round(lineAfterDiscount); // already gross
-
-      subtotal += lineSubtotal;
-      totalDiscount += discountAmount;
-
-      quoteItems.push({
-        quoteId: id,
-        productId: product.id,
-        sku: product.sku,
-        name: product.name,
-        quantity,
-        unitPrice,
-        discountPercent,
-        discountAmount,
-        taxAmount: lineTax,
-        rowTotal,
-      });
-    }
+    // Price the new lines BEFORE dropping the old ones, so a bad line
+    // can't leave the quote empty.
+    const { quoteItems, subtotal, totalDiscount } = await this.buildItems(
+      dto.items,
+      isTrade,
+    );
+    for (const qi of quoteItems) qi.quoteId = id;
+    await this.quoteItemRepository.delete({ quoteId: id });
 
     const afterDiscount = subtotal - totalDiscount;
     const taxAmount = this.round(afterDiscount / 11);

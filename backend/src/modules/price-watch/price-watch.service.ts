@@ -9,10 +9,8 @@ import { CompetitorPriceSnapshot } from './entities/competitor-price.entity';
 import { Product } from '../products/entities/product.entity';
 import {
   CompetitorIndex,
-  cfdBuildIndex,
   headlessIndex,
   joinedAlnum,
-  jsonLdPrice,
   olBuildIndex,
   olScrapePrice,
   promisePool,
@@ -27,7 +25,9 @@ export const COMPETITORS = [
   'bestbuylighting',
   'lights4less',
   'lightingillusions',
-  'ceilingfansdirect',
+  // Replaced CF Direct (ceilingfansdirect) on 8 Oct 2026 at Sally's
+  // request. Old CF Direct snapshots stay in the table but no longer show.
+  'harveynormanlighting',
   'ceilingfanswarehouse',
 ] as const;
 export type CompetitorName = (typeof COMPETITORS)[number];
@@ -121,6 +121,10 @@ export class PriceWatchService {
         ['bestbuylighting', await shopifyIndex('bestbuylighting', 'https://www.bestbuylighting.com.au')],
         ['lights4less', await shopifyIndex('lights4less', 'https://lights4less.com.au')],
         [
+          'harveynormanlighting',
+          await shopifyIndex('harveynormanlighting', 'https://harveynormanlighting.com.au'),
+        ],
+        [
           'lightingillusions',
           await headlessIndex(
             'lightingillusions',
@@ -143,16 +147,14 @@ export class PriceWatchService {
         perCompetitor[label] = n;
       }
 
-      // onlinelighting + ceilingfansdirect: sitemap slug match, then
-      // scrape each matched page once (OL: CS-Cart selectors + JSON-LD;
-      // CFD: JSON-LD only — its category API is broken).
+      // onlinelighting: sitemap slug match, then scrape each matched page
+      // once (CS-Cart selectors + JSON-LD).
       const slugSites: Array<{
         label: CompetitorName;
         idx: SlugIndex;
         scrape: (url: string) => Promise<number | null>;
       }> = [
         { label: 'onlinelighting', idx: await olBuildIndex(), scrape: olScrapePrice },
-        { label: 'ceilingfansdirect', idx: await cfdBuildIndex(), scrape: jsonLdPrice },
       ];
       for (const { label, idx, scrape } of slugSites) {
         const urlBySku = new Map<string, string>();

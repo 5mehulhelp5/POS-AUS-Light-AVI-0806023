@@ -61,12 +61,22 @@ export class QuotesController {
     > = {};
     // Store-wide promotion per product (applies to every customer).
     const promos: Record<number, { percent: number; label: string | null }> = {};
+    // Products whose own selling price (sale price when active) is already
+    // under cost + minimum margin — the cart flags them so staff know
+    // before checkout that a manager is needed (Sally, 8 Oct 2026,
+    // S9065TC). A yes/no only: the cost itself never leaves the server.
+    const belowMargin: number[] = [];
+    const multiplier = await this.tradeDiscounts.getMinMarginMultiplier();
     for (const p of products) {
       discounts[p.id] = await this.tradeDiscounts.getAutoDiscount(p);
       const promo = await this.tradeDiscounts.getPromoDiscount(p);
       if (promo.percent > 0) promos[p.id] = promo;
+      const cost = p.cost != null ? Number(p.cost) : 0;
+      if (cost > 0 && Number(p.effectivePrice) < cost * multiplier - 0.005) {
+        belowMargin.push(p.id);
+      }
     }
-    return { success: true, data: { discounts, promos } };
+    return { success: true, data: { discounts, promos, belowMargin } };
   }
 
   @Post()
@@ -227,20 +237,21 @@ export class QuotesController {
       canStackDiscounts: user.role.canStackDiscounts,
     };
 
-    // Only include items with a real productId (skip custom/legacy quote items that can't map back to a product)
-    const items = priceRows
-      .filter((r) => r.productId != null)
-      .map((r) => ({
-        productId: r.productId as number,
-        quantity: r.quantity,
-        unitPriceOverride: r.effectiveUnitPrice,
-        discountPercent: r.discountPercent,
-      }));
+    // Custom quote lines (no product) go through as custom order items,
+    // same as a custom item rung up at the till — dropping them would
+    // leave the payment short of the quoted total.
+    const items = priceRows.map((r) => ({
+      productId: r.productId ?? 0,
+      isCustom: r.productId == null,
+      sku: r.sku,
+      name: r.name,
+      quantity: r.quantity,
+      unitPriceOverride: r.effectiveUnitPrice,
+      discountPercent: r.discountPercent,
+    }));
 
     if (items.length === 0) {
-      throw new BadRequestException(
-        'No convertible items on this quote (all items lack a product reference)',
-      );
+      throw new BadRequestException('This quote has no items to convert');
     }
 
     const order = await this.ordersService.create(
@@ -254,6 +265,7 @@ export class QuotesController {
         trustItemUnitPrices: true,
         items: items.map((i) => ({
           productId: i.productId,
+          ...(i.isCustom ? { isCustom: true, sku: i.sku, name: i.name } : {}),
           quantity: i.quantity,
           discountPercent: i.discountPercent,
           unitPrice: i.unitPriceOverride,

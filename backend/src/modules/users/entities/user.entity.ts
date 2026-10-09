@@ -50,6 +50,13 @@ export class User {
   @Column({ name: 'last_login_at', type: 'timestamp', nullable: true })
   lastLoginAt: Date | null;
 
+  // Set when an admin deletes a user who has sales history: they can't
+  // log in, drop off the Users page, and their PIN / email are freed,
+  // while past orders and reports keep their name. A plain column, not
+  // @DeleteDateColumn, so order/report joins still find the row.
+  @Column({ name: 'deleted_at', type: 'timestamp', nullable: true })
+  deletedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

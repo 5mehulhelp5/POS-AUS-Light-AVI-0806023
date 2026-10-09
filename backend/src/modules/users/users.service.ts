@@ -32,7 +32,8 @@ export class UsersService {
 
     const query = this.userRepository
       .createQueryBuilder('user')
-      .leftJoinAndSelect('user.role', 'role');
+      .leftJoinAndSelect('user.role', 'role')
+      .where('user.deletedAt IS NULL');
 
     if (role) {
       query.andWhere('role.name = :role', { role });
@@ -152,13 +153,31 @@ export class UsersService {
     return this.findById(savedUser.id) as Promise<User>;
   }
 
-  async update(id: number, updateUserDto: UpdateUserDto): Promise<User> {
+  async update(
+    id: number,
+    updateUserDto: UpdateUserDto,
+    actingUserId?: number,
+  ): Promise<User> {
     const user = await this.findById(id);
-    if (!user) {
+    if (!user || user.deletedAt) {
       throw new NotFoundException('User not found');
     }
 
     const { password, roleId, pinCode, email, ...rest } = updateUserDto;
+
+    // An admin can't lock themselves out by demoting or deactivating
+    // their own account, and the store always keeps one active admin.
+    const losesAdmin =
+      user.role?.name === 'admin' &&
+      ((roleId && roleId !== user.roleId) || rest.isActive === false);
+    if (losesAdmin) {
+      if (actingUserId === id) {
+        throw new BadRequestException(
+          "You can't remove your own admin access — ask another admin",
+        );
+      }
+      await this.assertAnotherAdmin(id);
+    }
 
     // Email: allow clearing it (empty string → null) for casuals.
     let normalisedEmail: string | null | undefined;
@@ -212,6 +231,65 @@ export class UsersService {
     }
 
     await this.userRepository.update(id, { isActive: false });
+  }
+
+  private async assertAnotherAdmin(excludeUserId: number): Promise<void> {
+    const others = await this.userRepository
+      .createQueryBuilder('user')
+      .innerJoin('user.role', 'role')
+      .where('role.name = :admin', { admin: 'admin' })
+      .andWhere('user.isActive = 1')
+      .andWhere('user.deletedAt IS NULL')
+      .andWhere('user.id != :id', { id: excludeUserId })
+      .getCount();
+    if (others === 0) {
+      throw new BadRequestException(
+        'This is the only active admin — make someone else an admin first',
+      );
+    }
+  }
+
+  /**
+   * Admin "Delete user" (Sally, 8 Oct 2026). A user with no history is
+   * deleted outright. One who has rung up sales, quotes, refunds etc.
+   * can't be — those records point at them — so they're removed from
+   * the system instead: login disabled, PIN and email freed for reuse,
+   * hidden from the Users page; past orders and reports keep the name.
+   */
+  async remove(
+    id: number,
+    actingUserId: number,
+  ): Promise<{ mode: 'deleted' | 'removed' }> {
+    const user = await this.findById(id);
+    if (!user || user.deletedAt) {
+      throw new NotFoundException('User not found');
+    }
+    if (id === actingUserId) {
+      throw new BadRequestException("You can't delete your own account");
+    }
+    if (user.role?.name === 'admin') {
+      await this.assertAnotherAdmin(id);
+    }
+    try {
+      await this.userRepository.delete(id);
+      return { mode: 'deleted' };
+    } catch (err: any) {
+      // ER_ROW_IS_REFERENCED_2 — something (orders, logins, refunds…)
+      // still points at this user.
+      if (err?.errno !== 1451 && err?.code !== 'ER_ROW_IS_REFERENCED_2') {
+        throw err;
+      }
+    }
+    await this.userRepository.update(id, {
+      isActive: false,
+      deletedAt: new Date(),
+      email: null,
+      passwordHash: null,
+      // pin_code is NOT NULL + unique: a non-numeric placeholder frees
+      // the real PIN and can never be typed on the PIN pad.
+      pinCode: `x${id}`.slice(0, 6),
+    });
+    return { mode: 'removed' };
   }
 
   async updateLastLogin(id: number): Promise<void> {

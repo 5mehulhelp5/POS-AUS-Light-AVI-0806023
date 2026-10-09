@@ -19,8 +19,9 @@ export class QuoteItem {
   @Column({ name: 'quote_id', type: 'int', unsigned: true })
   quoteId: number;
 
-  @Column({ name: 'product_id', type: 'int', unsigned: true })
-  productId: number;
+  // Null on a custom line (no catalogue product).
+  @Column({ name: 'product_id', type: 'int', unsigned: true, nullable: true })
+  productId: number | null;
 
   @Column({ type: 'varchar', length: 100 })
   sku: string;
@@ -60,6 +61,11 @@ export class QuoteItem {
 
   @Column({ name: 'row_total', type: 'decimal', precision: 12, scale: 4 })
   rowTotal: number;
+
+  // The user typed this line's price / discount; it's kept exactly as
+  // entered and the trade auto-discount isn't re-applied on top.
+  @Column({ name: 'price_overridden', type: 'boolean', default: false })
+  priceOverridden: boolean;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

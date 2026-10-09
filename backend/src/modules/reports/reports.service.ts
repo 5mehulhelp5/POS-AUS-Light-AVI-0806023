@@ -639,13 +639,16 @@ export class ReportsService {
       `SELECT oi.id lineId, o.id orderId, o.order_number orderNumber, o.created_at createdAt, o.status,
               o.customer_name_snapshot customerSnapshot, c.first_name firstName, c.last_name lastName, c.company, c.phone,
               oi.product_id productId, oi.sku, oi.name, oi.quantity - COALESCE(rq.q, 0) qty, oi.row_total rowTotal, oi.quantity origQty,
+              p.cost productCost, oi.cost_price lineCost,
               (SELECT sc.supplier FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listSupplier,
+              (SELECT sc.cost_inc_gst FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listCost,
               (SELECT cat.name FROM product_categories pc JOIN categories cat ON cat.id = pc.category_id
                  JOIN categories par ON par.id = cat.parent_id AND par.name = 'Brands'
                 WHERE pc.product_id = oi.product_id ORDER BY cat.id LIMIT 1) brandCategory
          FROM order_items oi
          JOIN orders o ON o.id = oi.order_id
          LEFT JOIN customers c ON c.id = o.customer_id
+         LEFT JOIN products p ON p.id = oi.product_id
          LEFT JOIN (SELECT order_item_id, SUM(quantity) q FROM refund_items GROUP BY order_item_id) rq ON rq.order_item_id = oi.id
         WHERE oi.is_backorder = 1 AND oi.backorder_fulfilled_at IS NULL
           AND o.status NOT IN ('cancelled', 'refunded', 'layby_expired')
@@ -667,6 +670,14 @@ export class ReportsService {
       const supplier = clean(x.listSupplier) || clean(x.brandCategory) || 'Unknown supplier';
       const qty = n(x.qty);
       const unit = n(x.origQty) ? n(x.rowTotal) / n(x.origQty) : 0;
+      // What it costs to order in, ex GST — wholesalers' minimum orders
+      // are ex GST (Sally, 8 Oct 2026). The product's current cost (inc
+      // GST) first, else the cost captured on the sale, else the supplier
+      // price list. Null when none is known.
+      const costInc = [x.productCost, x.lineCost, x.listCost]
+        .map((v) => (v == null ? null : Number(v)))
+        .find((v) => v != null && v > 0);
+      const unitCostEx = costInc != null ? r2(costInc / 1.1) : null;
       const line = {
         lineId: Number(x.lineId),
         orderId: Number(x.orderId),
@@ -681,12 +692,18 @@ export class ReportsService {
         name: x.name,
         qty,
         value: r2(unit * qty),
+        unitCostEx,
+        costEx: unitCostEx != null ? r2(unitCostEx * qty) : null,
       };
       const key = supplier.toLowerCase();
-      const g = groups.get(key) || { supplier, lines: [] as any[], units: 0, value: 0 };
+      const g =
+        groups.get(key) ||
+        { supplier, lines: [] as any[], units: 0, value: 0, costEx: 0, linesWithoutCost: 0 };
       g.lines.push(line);
       g.units += qty;
       g.value = r2(g.value + line.value);
+      if (line.costEx != null) g.costEx = r2(g.costEx + line.costEx);
+      else g.linesWithoutCost++;
       groups.set(key, g);
     }
     const list = [...groups.values()].sort((a, b) =>
@@ -699,6 +716,8 @@ export class ReportsService {
         lines: rows.length,
         units: list.reduce((s, g) => s + g.units, 0),
         value: r2(list.reduce((s, g) => s + g.value, 0)),
+        costEx: r2(list.reduce((s, g) => s + g.costEx, 0)),
+        linesWithoutCost: list.reduce((s, g) => s + g.linesWithoutCost, 0),
         oldestDays: rows.length ? Math.max(...list.flatMap((g) => g.lines.map((l: any) => l.daysWaiting))) : 0,
       },
     };

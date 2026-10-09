@@ -51,6 +51,13 @@ export interface TradeRule {
 export const SMART_HOME_ROOT_CATEGORY_ID = 24; // pos.categories.id
 export const LED_ALU_PROFILE_CATEGORY_ID = 92; // pos.categories.id
 
+// Every rule applies its % to the special price when one is active,
+// else to the regular price, and the cost + margin floor still applies
+// (Sally, 8 Oct 2026: "Trade price needs to be 20% off the special
+// price. If the special price isn't there then 20% of the Price should
+// apply. And if the trade 20% discount is less than the margin, then
+// the margin rule should apply").
+//
 // Order matters — first enabled match wins. Ceiling Fans must sit above
 // the 20%-all rule or fans would never reach their 15%; the 20%-all rule
 // must sit above the two 10% rules so non-Eglo smart-home / LED-profile
@@ -79,6 +86,7 @@ export const DEFAULT_TRADE_RULES: TradeRule[] = [
     matchType: 'all_except_prefix',
     categoryId: null,
     excludeNamePrefix: 'eglo',
+    baseOnSpecialPrice: true,
     enabled: true,
   },
   {
@@ -88,6 +96,7 @@ export const DEFAULT_TRADE_RULES: TradeRule[] = [
     matchType: 'category',
     categoryId: SMART_HOME_ROOT_CATEGORY_ID,
     excludeNamePrefix: null,
+    baseOnSpecialPrice: true,
     enabled: true,
   },
   {
@@ -97,6 +106,7 @@ export const DEFAULT_TRADE_RULES: TradeRule[] = [
     matchType: 'category',
     categoryId: LED_ALU_PROFILE_CATEGORY_ID,
     excludeNamePrefix: null,
+    baseOnSpecialPrice: true,
     enabled: true,
   },
 ];

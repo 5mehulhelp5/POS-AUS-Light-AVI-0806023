@@ -340,9 +340,20 @@ export class OrdersService {
       minMarginMultiplier,
     );
     if (costFloorErrors.length > 0) {
+      // Name the lines (Sally, 8 Oct 2026: the generic message left staff
+      // guessing which item was the problem). Names only — never the
+      // cost or the floor, which sales staff mustn't see.
+      const offenders = costFloorErrors.map((e) => {
+        const sku = String(e.field || '').replace(/^items\./, '').replace(/\.unitPrice$/, '');
+        const line = cartItems.find((c) => c.sku === sku);
+        return line ? `${line.name} (${line.sku})` : sku;
+      });
       throw new BadRequestException({
         code: 'BELOW_COST_FLOOR',
-        message: 'One or more items are priced below the minimum allowed margin.',
+        message:
+          `${offenders.length === 1 ? 'This item is' : 'These items are'} priced below the ` +
+          `minimum allowed margin — ask a manager or admin to put the sale through: ` +
+          offenders.join(', '),
         errors: costFloorErrors,
       });
     }

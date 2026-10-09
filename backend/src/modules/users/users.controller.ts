@@ -17,6 +17,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles, RoleNames } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @ApiTags('users')
 @Controller('users')
@@ -140,8 +141,9 @@ export class UsersController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateUserDto: UpdateUserDto,
+    @CurrentUser() current: any,
   ) {
-    const user = await this.usersService.update(id, updateUserDto);
+    const user = await this.usersService.update(id, updateUserDto, current?.id);
     return {
       success: true,
       data: {
@@ -161,14 +163,23 @@ export class UsersController {
     };
   }
 
+  // Permanent delete (Sally, 8 Oct 2026). Deactivating — the old meaning
+  // of this route — is now the Active switch on the edit form (PUT).
   @Delete(':id')
   @Roles(RoleNames.ADMIN)
-  @ApiOperation({ summary: 'Deactivate user' })
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    await this.usersService.deactivate(id);
+  @ApiOperation({ summary: 'Delete user permanently' })
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() current: any,
+  ) {
+    const { mode } = await this.usersService.remove(id, current?.id);
     return {
       success: true,
-      message: 'User deactivated successfully',
+      data: { mode },
+      message:
+        mode === 'deleted'
+          ? 'User deleted'
+          : 'User removed — their past sales keep their name',
     };
   }
 }
