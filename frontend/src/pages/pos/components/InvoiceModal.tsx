@@ -199,8 +199,16 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
       `info@australianlighting.com.au or contact us on 03 9548 9200 (option 1)\n\n` +
       `Thank you for choosing\nAustralian Lighting\n\n` +
       `1704 Dandenong Rd\nOakleigh East Vic 3166\n03 9548 9200\n`;
+    // Write the address(es) plainly: Outlook doesn't decode "%40", so a
+    // fully encoded address left the To box empty (Sally, 12 Oct 2026).
+    // Only characters that would break the link get encoded.
+    const toPart = to
+      .split(/[,;\s]+/)
+      .filter(Boolean)
+      .map((a) => a.replace(/[^A-Za-z0-9@._+-]/g, (c) => encodeURIComponent(c)))
+      .join(',');
     const href =
-      `mailto:${encodeURIComponent(to)}` +
+      `mailto:${toPart}` +
       `?subject=${encodeURIComponent(subject)}` +
       `&body=${encodeURIComponent(body)}`;
     // Open the email FIRST, straight from the click. Chrome only lets a
