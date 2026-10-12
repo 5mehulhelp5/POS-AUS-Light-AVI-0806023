@@ -186,15 +186,18 @@ export default function POSPage() {
   // Minimum margin over cost — a setting (20% since 29 Sep 2026).
   const minMarginPct = useMinMarginPercent();
 
-  // "Last Invoice" quick re-print — pulls the most recently created
-  // order and opens its printable invoice without leaving the POS.
+  // "Last Invoice" quick re-print — pulls the logged-in user's most
+  // recent POS sale and opens its printable invoice without leaving the
+  // POS. Per user (Sally, 12 Oct 2026: "if Jimmy's used this, then Jimmy
+  // needs to have his last invoice, not Tina").
   const [invoiceData, setInvoiceData] = useState<any>(null);
   const showLastInvoice = async () => {
+    if (!user?.id) return;
     try {
-      const r = await ordersApi.getOrders({ page: 1, limit: 1 });
+      const r = await ordersApi.getOrders({ page: 1, limit: 1, userId: user.id, source: 'pos' });
       const last = r.data?.data?.orders?.[0];
       if (!last) {
-        toast.error('No recent orders found');
+        toast.error(`No invoices from ${user.firstName || 'you'} yet`);
         return;
       }
       const [full, refundsRes] = await Promise.all([
