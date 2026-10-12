@@ -720,35 +720,84 @@ export default function PaymentModal({
           });
         }
 
-        // Layby requires a DB customer record. If the cashier typed inline
-        // details without picking/creating a customer first, auto-create
-        // one here so the order can attach to it and we can follow up
-        // later.
+        // Save the buyer as a customer when the cashier typed their details
+        // here instead of using Create / Search Customer (Sally, 12 Oct
+        // 2026: "if a user enters all the details at this stage ... can
+        // this be logged and saved as a customer or as a trade, whatever
+        // the user chooses"). Trade sale -> saved as a trade customer. A
+        // customer already on file with the same phone (or email) is
+        // linked instead of duplicated. Lay-by still needs a customer.
         let customerIdToUse = cart.customerId;
-        if ((isLayby || hasLaybyHeldLine) && !customerIdToUse) {
-          const parts = customerName.trim().split(/\s+/);
-          const firstName = parts.shift() || customerName.trim();
-          // Last name is optional now; only send it if the cashier
-          // typed a multi-word name. Phone is sent digits-only since
-          // server validates exactly 10.
-          const lastName = parts.join(' ') || null;
+        const needsCustomer = isLayby || hasLaybyHeldLine;
+        if (!customerIdToUse && (!walkIn || needsCustomer)) {
+          const isTradeSale = buyerType === 'retail';
           const phoneDigits = customerPhone.trim().replace(/\D+/g, '');
-          if (phoneDigits && phoneDigits.length !== 10) {
-            throw new Error('Phone must be exactly 10 digits to create a Lay By customer');
+          const email = customerEmail.trim();
+          const company = isTradeSale ? tradeCompanyName.trim() : '';
+          let firstName = (isTradeSale ? tradeFirstName : customerFirstName).trim();
+          let lastName = (isTradeSale ? tradeLastName : customerLastName).trim();
+          if (!firstName && !isTradeSale && customerName.trim()) {
+            const parts = customerName.trim().split(/\s+/);
+            firstName = parts.shift() || '';
+            lastName = lastName || parts.join(' ');
           }
-          const created = await customersApi.createCustomer({
-            firstName,
-            lastName,
-            phone: phoneDigits || undefined,
-            email: customerEmail.trim() || undefined,
-            billingStreet: customerStreet.trim() || undefined,
-            billingCity: customerCity.trim() || undefined,
-            billingState: customerState || undefined,
-            billingPostcode: customerPostcode.trim() || undefined,
-          });
-          customerIdToUse = created.data?.data?.customer?.id || null;
-          if (!customerIdToUse) {
-            throw new Error('Could not create customer record for Lay By');
+          const hasName = !!(firstName || company);
+          const hasContact = phoneDigits.length === 10 || !!email;
+          if (hasName && (hasContact || needsCustomer)) {
+            try {
+              let existing: any = null;
+              if (phoneDigits.length === 10) {
+                const r = await customersApi.getCustomers({ search: phoneDigits, limit: 10 });
+                existing = (r.data?.data?.customers || []).find(
+                  (c: any) =>
+                    (c.phone || '').replace(/\D/g, '') === phoneDigits ||
+                    (c.mobile || '').replace(/\D/g, '') === phoneDigits,
+                );
+              }
+              if (!existing && email) {
+                const r = await customersApi.getCustomers({ search: email, limit: 10 });
+                existing = (r.data?.data?.customers || []).find(
+                  (c: any) => (c.email || '').trim().toLowerCase() === email.toLowerCase(),
+                );
+              }
+              if (existing) {
+                customerIdToUse = existing.id;
+              } else {
+                const created = await customersApi.createCustomer({
+                  firstName: firstName || company,
+                  lastName: lastName || null,
+                  company: company || undefined,
+                  taxNumber: isTradeSale && companyAbn.trim() ? companyAbn.trim() : undefined,
+                  phone: phoneDigits || undefined,
+                  email: email || undefined,
+                  billingStreet: customerStreet.trim() || undefined,
+                  billingCity: customerCity.trim() || undefined,
+                  billingState: customerState || undefined,
+                  billingPostcode: customerPostcode.trim() || undefined,
+                  isTrade: isTradeSale,
+                });
+                customerIdToUse = created.data?.data?.customer?.id || null;
+                if (customerIdToUse) {
+                  toast.success(
+                    `${[firstName, lastName].filter(Boolean).join(' ') || company} saved as a ${
+                      isTradeSale ? 'trade ' : ''
+                    }customer`,
+                  );
+                }
+              }
+            } catch (err: any) {
+              // Never lose a sale over the customer record — except a lay
+              // by, which has to hang off a customer.
+              if (needsCustomer) {
+                throw new Error(
+                  err?.response?.data?.message || 'Could not create the customer record for this Lay By',
+                );
+              }
+              toast.error('Could not save the customer details — the sale still goes through');
+            }
+          }
+          if (needsCustomer && !customerIdToUse) {
+            throw new Error('Lay By needs a customer — enter their name and phone');
           }
         }
 

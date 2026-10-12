@@ -258,7 +258,13 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
     qty: it.quantity,
     name: it.name,
     sku: it.sku,
-    unitPrice: it.unitPrice,
+    // What the customer actually pays per unit (trade / promo / discount
+    // already off), with the list price kept to show crossed out. Sally,
+    // 12 Oct 2026: a trade invoice showed the $217.24 retail as the unit
+    // price next to a $347.58 total for 2 ($173.79 trade each), and the
+    // customer was charged for the wrong quantity.
+    unitPrice: it.quantity > 0 ? it.rowTotal / it.quantity : it.unitPrice,
+    listPrice: it.unitPrice,
     rowTotal: it.rowTotal,
     takenQty: it.isBackorder || it.isLaybyHeld ? 0 : it.quantity,
     backorderQty: it.isBackorder ? it.quantity : 0,
@@ -464,7 +470,16 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
                       </span>
                     ) : null}
                   </td>
-                  <td style={td('right')}>{money(r.unitPrice)}</td>
+                  <td style={td('right')}>
+                    <span style={{ fontWeight: r.listPrice - r.unitPrice > 0.005 ? 700 : undefined }}>
+                      {money(r.unitPrice)}
+                    </span>
+                    {r.listPrice - r.unitPrice > 0.005 ? (
+                      <div style={{ color: MUTED, fontSize: '10px', textDecoration: 'line-through' }}>
+                        {money(r.listPrice)}
+                      </div>
+                    ) : null}
+                  </td>
                   <td style={td('center')}>{r.takenQty || ''}</td>
                   <td style={td('center')}>{r.backorderQty || ''}</td>
                   <td style={td('center')}>{r.laybyQty || ''}</td>
