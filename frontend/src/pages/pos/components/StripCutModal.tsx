@@ -75,6 +75,23 @@ const FALLBACK_STRIP_PRODUCTS: StripProduct[] = [
   },
 ];
 
+// "Custom strip" — a strip that isn't in the admin list yet (Sally, 12
+// Oct 2026: "we've still got strip lighting that we haven't uploaded ...
+// we need a custom in here so that we can enter manually what strip
+// lighting it needs to be"). Its name, SKU and rates are typed in.
+const CUSTOM_ID = '__custom__';
+const CUT_OPTIONS = [
+  { mm: 1, label: 'Exact length (no rounding)' },
+  { mm: 50, label: 'Every 50mm' },
+  { mm: 100, label: 'Every 100mm' },
+  { mm: 500, label: 'Every 0.5m' },
+  { mm: 1000, label: 'Every 1m' },
+];
+const toNum = (v: string): number => {
+  const n = parseFloat(String(v).replace(/[$,\s]/g, ''));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+
 // Show anything a metre or longer in metres, shorter in mm — Sally:
 // "once exceed over 1m the mm's convert into 1m".
 const formatLength = (mm: number): string => {
@@ -135,6 +152,14 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
   const [qtyStr, setQtyStr] = useState('1');
   const [isTrade, setIsTrade] = useState(defaultTrade);
   const [order, setOrder] = useState<OrderLine[]>([]);
+  // Custom strip fields (used when productId === CUSTOM_ID).
+  const [customName, setCustomName] = useState('');
+  const [customSku, setCustomSku] = useState('');
+  const [customRetail, setCustomRetail] = useState('');
+  const [customTrade, setCustomTrade] = useState('');
+  const [customCutMm, setCustomCutMm] = useState(500);
+  const [customTailIncl, setCustomTailIncl] = useState('1');
+  const [customTailPerM, setCustomTailPerM] = useState('2.50');
 
   // Pull admin-maintained rates. Falls back to the built-in list on
   // failure so the counter still works if settings are unreachable.
@@ -161,8 +186,25 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
     };
   }, []);
 
-  const product =
-    products.find((p) => p.id === productId) ?? products[0] ?? FALLBACK_STRIP_PRODUCTS[0];
+  const isCustom = productId === CUSTOM_ID;
+  const customProduct = useMemo<StripProduct>(() => {
+    const retail = toNum(customRetail);
+    // Trade left blank = same as retail.
+    const trade = customTrade.trim() ? toNum(customTrade) : retail;
+    return {
+      id: customSku.trim() || 'CUSTOM',
+      name: customName.trim() || 'Custom LED strip',
+      retailPerM: retail,
+      tradePerM: trade,
+      cutMm: customCutMm,
+      maxRunM: 1000,
+      includedTailM: toNum(customTailIncl),
+      tailPerM: toNum(customTailPerM),
+    };
+  }, [customName, customSku, customRetail, customTrade, customCutMm, customTailIncl, customTailPerM]);
+  const product = isCustom
+    ? customProduct
+    : products.find((p) => p.id === productId) ?? products[0] ?? FALLBACK_STRIP_PRODUCTS[0];
   const perM = isTrade ? product.tradePerM : product.retailPerM;
 
   const filteredProducts = useMemo(() => {
@@ -208,7 +250,9 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
   // Exceeding the max continuous run is a advisory only — it means the
   // job needs joiners/separate runs, not that we refuse the sale. Trade
   // routinely buy 100m+ (Sally: "take off '5m max continuous run'").
-  const canAdd = calc.suppliedM > 0;
+  // A custom strip needs a name and a price per metre before it can be added.
+  const customReady = !isCustom || (customName.trim() !== '' && perM > 0);
+  const canAdd = calc.suppliedM > 0 && customReady;
 
   const subtotal = order.reduce((s, l) => s + l.linePrice, 0);
 
@@ -218,7 +262,8 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
       ...prev,
       {
         id: prev.length + 1,
-        product,
+        // Snapshot — a custom strip's fields can change for the next line.
+        product: { ...product },
         lengthMm: calc.lengthMm,
         suppliedLengthM: calc.suppliedM,
         tailM: calc.tailM,
@@ -302,7 +347,7 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
             <div className="relative">
               <input
                 type="text"
-                value={pickerOpen ? productQuery : product.name}
+                value={pickerOpen ? productQuery : isCustom ? 'Custom strip (typed in below)' : product.name}
                 onFocus={() => {
                   setPickerOpen(true);
                   setProductQuery('');
@@ -327,6 +372,24 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
               />
               {pickerOpen && (
                 <ul className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto bg-pos-card border border-gray-700 rounded-md shadow-xl">
+                  <li>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setProductId(CUSTOM_ID);
+                        setPickerOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 border-b border-gray-700 hover:bg-pos-accent/40 ${
+                        isCustom ? 'text-amber-400' : 'text-pos-text'
+                      }`}
+                    >
+                      <span className="block text-sm font-semibold">+ Custom strip</span>
+                      <span className="block text-[11px] text-gray-500">
+                        Not in the list? Type in the name and price per metre
+                      </span>
+                    </button>
+                  </li>
                   {filteredProducts.length === 0 ? (
                     <li className="px-3 py-2 text-sm text-gray-500">
                       No strips match “{productQuery}”
@@ -359,9 +422,94 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
               )}
             </div>
 
+            {isCustom && (
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 border border-amber-500/40 rounded-lg p-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Strip name / description *</label>
+                  <input
+                    className="input py-1.5 text-sm"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    placeholder="e.g. 14.4W 24V IP65 LED strip 4000K"
+                    autoFocus
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-400 mb-1">SKU (optional)</label>
+                  <input
+                    className="input py-1.5 text-sm font-mono"
+                    value={customSku}
+                    onChange={(e) => setCustomSku(e.target.value)}
+                    placeholder="supplier code"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Retail $/m *</label>
+                  <input
+                    className="input py-1.5 text-sm"
+                    inputMode="decimal"
+                    value={customRetail}
+                    onChange={(e) => setCustomRetail(e.target.value)}
+                    placeholder="inc GST"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Trade $/m</label>
+                  <input
+                    className="input py-1.5 text-sm"
+                    inputMode="decimal"
+                    value={customTrade}
+                    onChange={(e) => setCustomTrade(e.target.value)}
+                    placeholder="blank = retail"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Cut points</label>
+                  <select
+                    className="input py-1.5 text-sm"
+                    value={customCutMm}
+                    onChange={(e) => setCustomCutMm(Number(e.target.value))}
+                  >
+                    {CUT_OPTIONS.map((o) => (
+                      <option key={o.mm} value={o.mm}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Tail included (m)</label>
+                  <input
+                    className="input py-1.5 text-sm"
+                    inputMode="decimal"
+                    value={customTailIncl}
+                    onChange={(e) => setCustomTailIncl(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Extra tail $/m</label>
+                  <input
+                    className="input py-1.5 text-sm"
+                    inputMode="decimal"
+                    value={customTailPerM}
+                    onChange={(e) => setCustomTailPerM(e.target.value)}
+                  />
+                </div>
+                {!customReady && (
+                  <p className="col-span-2 md:col-span-4 text-xs text-amber-500">
+                    Enter the strip name and its price per metre to add it.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-400">
               <span>Rate <span className="font-bold text-pos-text">${perM.toFixed(2)}</span>/m</span>
-              <span>Cuts every <span className="font-bold text-pos-text">{formatLength(product.cutMm)}</span></span>
+              <span>
+                {product.cutMm <= 1 ? (
+                  'Cut to exact length'
+                ) : (
+                  <>Cuts every <span className="font-bold text-pos-text">{formatLength(product.cutMm)}</span></>
+                )}
+              </span>
               <span>Max run <span className="font-bold text-pos-text">{product.maxRunM}m</span></span>
               <span>
                 Tail <span className="font-bold text-pos-text">{product.includedTailM}m</span> incl
@@ -387,7 +535,7 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
                   placeholder="e.g. 3.2"
                   autoFocus
                 />
-                {calc.lengthMm > 0 && (
+                {calc.lengthMm > 0 && product.cutMm > 1 && (
                   <p className="text-xs text-gray-500 mt-1">
                     Rounded up to next cut point → supplied{' '}
                     <span className="text-gray-300 font-semibold">
