@@ -5,7 +5,7 @@ import type { RootState } from '../../store';
 import { reportsApi, ReportRange } from '../../services/api';
 import {
   money, int, pct, change, dateTime, dateOnly, periodLabel, presetRange, PRESETS, Preset,
-  StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col, ymd,
+  StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col,
 } from './reportKit';
 import PurchaseOrderEditor from './PurchaseOrder';
 
@@ -740,25 +740,38 @@ type BoLine = {
 };
 type BoGroup = { supplier: string; lines: BoLine[]; units: number; value: number; costEx: number; linesWithoutCost: number };
 
-// Melbourne calendar day of an ISO timestamp, for the date filter.
-const localDay = (iso: string) => ymd(new Date(iso));
+// A picked day + optional time as a local timestamp. With no time the
+// range covers the whole day; an end time includes its whole minute.
+const boundary = (day: string, time: string, end: boolean): number =>
+  new Date(`${day}T${time || (end ? '23:59' : '00:00')}`).getTime() + (end ? 59999 : 0);
+const fmtTime = (t: string): string => {
+  const [h, m] = t.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`;
+};
 
 function Backorders() {
   const { data, loading, error, reload } = useReport<{ suppliers: BoGroup[]; totals: any }>(() => reportsApi.backorders(), []);
   const me = useSelector((s: RootState) => s.auth.user);
   const [supplier, setSupplier] = useState('all');
-  // Ordered-date filter (Sally, 8 Oct 2026: "Can we filter by Date").
+  // Ordered date + time filter (Sally, 8 Oct 2026: "Can we filter by
+  // Date"; 12 Oct: "also have a filter of 'time' like we have with
+  // 'date'"). A time applies to its date, so it needs a date first.
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [fromTime, setFromTime] = useState('');
+  const [toTime, setToTime] = useState('');
+  const fromMs = from ? boundary(from, fromTime, false) : null;
+  const toMs = to ? boundary(to, toTime, true) : null;
+  const filtered = !!(from || to);
   const [printing, setPrinting] = useState(false);
   const [poFor, setPoFor] = useState<BoGroup | null>(null);
 
-  // Date filter first, then regroup totals so cards / headers / PO match it.
+  // Date/time filter first, then regroup totals so cards / headers / PO match it.
   const dated: BoGroup[] = (data?.suppliers || [])
     .map((g) => {
       const lines = g.lines.filter((l) => {
-        const d = localDay(l.orderedAt);
-        return (!from || d >= from) && (!to || d <= to);
+        const t = new Date(l.orderedAt).getTime();
+        return (fromMs == null || t >= fromMs) && (toMs == null || t <= toMs);
       });
       return {
         ...g,
@@ -785,7 +798,7 @@ function Backorders() {
 
   const lineCols: Col<BoLine>[] = [
     { key: 'o', label: 'Order', value: (r) => r.orderNumber },
-    { key: 'd', label: 'Ordered', value: (r) => r.orderedAt, render: (r) => dateOnly(r.orderedAt) },
+    { key: 'd', label: 'Ordered', value: (r) => r.orderedAt, render: (r) => dateTime(r.orderedAt) },
     {
       key: 'w', label: 'Waiting', align: 'right', value: (r) => r.daysWaiting,
       render: (r) => <span className={r.daysWaiting > 30 ? 'text-red-500 font-semibold' : r.daysWaiting > 14 ? 'text-amber-500' : ''}>{r.daysWaiting} days</span>,
@@ -846,14 +859,62 @@ function Backorders() {
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Ordered from</label>
-              <input type="date" className="input" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+              <div className="flex gap-1">
+                <input
+                  type="date"
+                  className="input"
+                  value={from}
+                  max={to || undefined}
+                  onChange={(e) => {
+                    setFrom(e.target.value);
+                    if (!e.target.value) setFromTime('');
+                  }}
+                />
+                <input
+                  type="time"
+                  className="input w-32"
+                  value={fromTime}
+                  disabled={!from}
+                  title={from ? 'From this time (optional)' : 'Pick a date first'}
+                  onChange={(e) => setFromTime(e.target.value)}
+                />
+              </div>
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">to</label>
-              <input type="date" className="input" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+              <div className="flex gap-1">
+                <input
+                  type="date"
+                  className="input"
+                  value={to}
+                  min={from || undefined}
+                  onChange={(e) => {
+                    setTo(e.target.value);
+                    if (!e.target.value) setToTime('');
+                  }}
+                />
+                <input
+                  type="time"
+                  className="input w-32"
+                  value={toTime}
+                  disabled={!to}
+                  title={to ? 'Up to this time (optional)' : 'Pick a date first'}
+                  onChange={(e) => setToTime(e.target.value)}
+                />
+              </div>
             </div>
-            {(from || to) && (
-              <button className="btn-secondary" onClick={() => { setFrom(''); setTo(''); }}>Clear dates</button>
+            {filtered && (
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setFrom('');
+                  setTo('');
+                  setFromTime('');
+                  setToTime('');
+                }}
+              >
+                Clear dates
+              </button>
             )}
             <button
               className="btn-primary"
@@ -869,7 +930,7 @@ function Backorders() {
           </div>
           {groups.length === 0 && (
             <div className="card p-6 text-gray-400">
-              {from || to ? 'Nothing on backorder from those dates.' : 'Nothing on backorder.'}
+              {filtered ? 'Nothing on backorder in that period.' : 'Nothing on backorder.'}
             </div>
           )}
           {groups.map((g) => (
@@ -906,7 +967,12 @@ function Backorders() {
             <PrintSheet title="Backorders by supplier" onClose={() => setPrinting(false)}>
               <p className="mb-4 text-gray-600">
                 Australian Lighting & Fans · printed {dateTime(new Date().toISOString())}
-                {(from || to) && <> · ordered {from ? dateOnly(from) : 'any time'} to {to ? dateOnly(to) : 'today'}</>}
+                {filtered && (
+                  <>
+                    {' '}· ordered {from ? `${dateOnly(from)}${fromTime ? ` ${fmtTime(fromTime)}` : ''}` : 'any time'} to{' '}
+                    {to ? `${dateOnly(to)}${toTime ? ` ${fmtTime(toTime)}` : ''}` : 'now'}
+                  </>
+                )}
               </p>
               {groups.map((g) => (
                 <div key={g.supplier} className="mb-5">
@@ -921,7 +987,7 @@ function Backorders() {
                     <tbody>
                       {g.lines.map((l) => (
                         <tr key={l.lineId} className="border-t border-gray-200">
-                          <td className="py-1">{l.orderNumber}</td><td>{dateOnly(l.orderedAt)}</td><td>{l.customer}</td>
+                          <td className="py-1">{l.orderNumber}</td><td>{dateTime(l.orderedAt)}</td><td>{l.customer}</td>
                           <td>{l.phone || ''}</td><td>{l.sku}</td><td>{l.name}</td><td className="text-right">{l.qty}</td>
                           <td className="text-right">{l.costEx != null ? money(l.costEx) : '—'}</td>
                         </tr>
