@@ -770,86 +770,26 @@ export default function ProductDetailModal({
         </div>
       </div>
 
-      {/* Shelf ticket print view — name, SKU, price (Avi, 9 Sep).
-          Sized to Sally's label stock (10 Sep): 36mm high x 89mm wide.
-          The ticket is drawn at true physical size on screen and the
-          injected @page rule makes the print page exactly that size
-          with no margin, so it prints 1:1 on the label printer.
-          printable-root isolates it during print so only the ticket
-          comes out; .paper keeps it black-on-white in both themes. */}
+      {/* Shelf ticket — Sally's label stock, 89mm wide x 36mm high.
+          The preview is drawn at true size from the same HTML that gets
+          printed. Printing happens in a separate one-page document
+          (printSaleTicket): printed from inside this full-screen modal,
+          the hidden POS underneath still took up room, the job ran to a
+          second label, and Chrome repeats fixed-position content on every
+          page — so the ticket came out twice (Sally, 12 Oct 2026). */}
       {showTicket && (
-        <div className="modal-backdrop-top print:bg-white print:static">
-          <style>{`@page { size: 89mm 36mm; margin: 0; }`}</style>
-          <div className="m-auto flex flex-col items-center gap-4 print:m-0 print:block">
+        <div className="modal-backdrop-top">
+          <div className="m-auto flex flex-col items-center gap-4">
             <div
-              className="paper printable-root bg-white text-black overflow-hidden flex items-stretch"
-              style={{
-                width: '89mm',
-                height: '36mm',
-                padding: '2mm 3mm',
-                fontFamily: 'Arial, Helvetica, sans-serif',
-              }}
-            >
-              {/* Left: name, SKU. No store name (Sally, 8 Oct 2026:
-                  "remove 'Australian Lighting & Fans' and make PRICE
-                  BIGGER") — the space goes to the price. */}
-              <div className="flex-1 min-w-0 flex flex-col justify-between">
-                <p
-                  className="font-bold"
-                  style={{
-                    fontSize: '10pt',
-                    lineHeight: 1.15,
-                    display: '-webkit-box',
-                    WebkitLineClamp: 4,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {product.name}
-                </p>
-                <p className="font-mono text-gray-700 truncate" style={{ fontSize: '7pt' }}>
-                  SKU {product.sku}
-                </p>
-              </div>
+              className="shadow-lg"
+              dangerouslySetInnerHTML={{ __html: saleTicketHtml(product, onSale) }}
+            />
 
-              {/* Right: price, as big as the label allows. The size
-                  steps down with the number of characters so a four-
-                  figure price still fits beside the name. */}
-              {(() => {
-                const shown = Number(onSale ? product.specialPrice : product.price);
-                const text = `$${shown.toFixed(2)}`;
-                const pt = text.length <= 6 ? 34 : text.length === 7 ? 30 : text.length === 8 ? 26 : 22;
-                return (
-                  <div
-                    className="flex flex-col items-end justify-center text-right shrink-0"
-                    style={{ paddingLeft: '2mm' }}
-                  >
-                    {onSale && (
-                      <p className="text-gray-600 line-through" style={{ fontSize: '9pt' }}>
-                        ${Number(product.price).toFixed(2)}
-                      </p>
-                    )}
-                    <p
-                      className="font-extrabold whitespace-nowrap"
-                      style={{ fontSize: `${pt}pt`, lineHeight: 1, letterSpacing: '-0.02em' }}
-                    >
-                      {text}
-                    </p>
-                    {onSale && (
-                      <p className="font-bold uppercase" style={{ fontSize: '8pt', letterSpacing: '0.1em' }}>
-                        Sale
-                      </p>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-
-            <p className="text-xs text-gray-400 print:hidden">
+            <p className="text-xs text-gray-400">
               Actual size: 89mm wide × 36mm high
             </p>
 
-            <div className="flex gap-3 w-64 print:hidden">
+            <div className="flex gap-3 w-64">
               <button
                 className="btn-secondary flex-1"
                 onClick={() => setShowTicket(false)}
@@ -858,7 +798,7 @@ export default function ProductDetailModal({
               </button>
               <button
                 className="btn-primary flex-1 flex items-center justify-center gap-2"
-                onClick={() => window.print()}
+                onClick={() => printSaleTicket(product, onSale)}
               >
                 <PrinterIcon className="h-5 w-5" />
                 Print
@@ -869,4 +809,89 @@ export default function ProductDetailModal({
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------- sale ticket
+type TicketProduct = {
+  name: string;
+  sku: string;
+  price: number | string;
+  specialPrice: number | string | null;
+};
+
+const escHtml = (v: unknown): string =>
+  String(v ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
+  );
+
+// The 89 x 36 mm ticket as self-contained HTML (inline styles only, so the
+// print document needs no app CSS). Layout per Sally, 12 Oct 2026: "put
+// sku top left corner and price then can be bigger" — SKU top-left, the
+// name under it (2 lines max), and the price across the full width as big
+// as it fits.
+// Width in mm of `text` at `pt` points in `font` (CSS font shorthand
+// without the size), measured with the browser's real font metrics.
+let measureCtx: CanvasRenderingContext2D | null = null;
+function textWidthMm(text: string, font: string, pt: number): number {
+  measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
+  if (!measureCtx) return text.length * pt * 0.3528 * 0.6; // rough fallback
+  measureCtx.font = `${font.replace('{size}', '100px')}`;
+  const px = measureCtx.measureText(text).width * (pt / 75); // 100px = 75pt
+  return px / 3.7795; // 96 dpi: 3.7795 px per mm
+}
+
+function saleTicketHtml(p: TicketProduct, onSale: boolean): string {
+  const shown = Number(onSale ? p.specialPrice : p.price);
+  const text = `$${shown.toFixed(2)}`;
+  const was = `$${Number(p.price).toFixed(2)}`;
+  // Price as big as fits: the label is 83mm wide inside its padding, less
+  // the was-price / SALE block on a sale ticket, and the height allows up
+  // to ~56pt. Measured, not estimated, so four-figure prices never clip.
+  const saleMm = onSale
+    ? Math.max(textWidthMm(was, '{size} Arial, Helvetica, sans-serif', 10), textWidthMm('SALE', 'bold {size} Arial, Helvetica, sans-serif', 10) + 4) + 3
+    : 0;
+  const availMm = 83 - saleMm - 1.5;
+  const perPt = textWidthMm(text, 'bold {size} Arial, Helvetica, sans-serif', 1) * 0.98; // letter-spacing -0.02em
+  const pt = Math.max(20, Math.floor(Math.min(56, availMm / perPt)));
+  const sale = onSale
+    ? `<div style="text-align:right;padding-bottom:1.6mm;white-space:nowrap">
+         <div style="font-size:10pt;color:#333;text-decoration:line-through">${was}</div>
+         <div style="font-size:10pt;font-weight:700;letter-spacing:0.12em">SALE</div>
+       </div>`
+    : '';
+  return `<div style="width:89mm;height:36mm;box-sizing:border-box;padding:2mm 3mm;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;overflow:hidden">
+    <div style="font-family:'Courier New',monospace;font-weight:700;font-size:8.5pt;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(p.sku)}</div>
+    <div style="font-weight:700;font-size:9.5pt;line-height:1.15;margin-top:0.8mm;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escHtml(p.name)}</div>
+    <div style="flex:1;min-height:0;display:flex;align-items:flex-end;justify-content:flex-end;gap:2.5mm">
+      ${sale}
+      <div style="font-weight:700;font-size:${pt}pt;line-height:0.9;letter-spacing:-0.02em;white-space:nowrap">${text}</div>
+    </div>
+  </div>`;
+}
+
+// Prints the ticket from a hidden iframe holding only the ticket, so the
+// job is exactly one 89 x 36 mm page whatever is on screen.
+function printSaleTicket(p: TicketProduct, onSale: boolean) {
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  const win = frame.contentWindow;
+  if (!doc || !win) {
+    frame.remove();
+    return;
+  }
+  doc.open();
+  doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escHtml(p.sku)}</title>
+    <style>@page{size:89mm 36mm;margin:0}html,body{margin:0;padding:0;background:#fff}
+    body{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head>
+    <body>${saleTicketHtml(p, onSale)}</body></html>`);
+  doc.close();
+  setTimeout(() => {
+    win.focus();
+    win.print();
+    // print() blocks until the dialog closes; tidy up afterwards.
+    setTimeout(() => frame.remove(), 1000);
+  }, 150);
 }
