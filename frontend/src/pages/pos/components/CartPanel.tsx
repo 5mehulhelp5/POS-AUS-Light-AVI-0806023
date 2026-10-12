@@ -406,10 +406,13 @@ export default function CartPanel({
                           return (
                             <button
                               className="text-sm hover:text-primary-400 flex items-center gap-1.5"
-                              title="Click to edit unit price"
+                              title="Click to change the price the customer pays"
                               onClick={() => {
+                                // Start from what the customer pays now (trade
+                                // / promo already off) — the typed price is
+                                // final, nothing else comes off it.
                                 setEditingUnitPrice(item.productId);
-                                setUnitPriceInput(item.unitPrice.toFixed(2));
+                                setUnitPriceInput(netPrice.toFixed(2));
                               }}
                             >
                               {effective > 0 ? (
@@ -430,6 +433,18 @@ export default function CartPanel({
                         })()
                       )}
                       {(() => {
+                        // A typed price is final — say so instead of showing
+                        // a trade price that no longer applies.
+                        if (item.priceEdited) {
+                          return (
+                            <span
+                              className="text-[10px] font-semibold text-primary-400"
+                              title="Price typed in — no trade % or promotion comes off it"
+                            >
+                              price set
+                            </span>
+                          );
+                        }
                         const pct = tradeMap[item.productId]?.percent || 0;
                         if (pct <= 0) return null;
                         // Line switched to the customer price because the
@@ -439,13 +454,21 @@ export default function CartPanel({
                         const tradePrice =
                           Math.round(item.unitPrice * (1 - pct / 100) * 100) /
                           100;
+                        // Clickable: set this line's trade price directly
+                        // (Sally, 12 Oct 2026: "make this a clickable edit ...
+                        // it always stays on trade").
                         return (
-                          <span
-                            className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40"
-                            title={`Trade price (${fmtPct(pct)}% off)`}
+                          <button
+                            type="button"
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-500/40 hover:border-yellow-300"
+                            title={`Trade price (${fmtPct(pct)}% off) — click to change it for this sale`}
+                            onClick={() => {
+                              setEditingUnitPrice(item.productId);
+                              setUnitPriceInput(tradePrice.toFixed(2));
+                            }}
                           >
                             Trade ${tradePrice.toFixed(2)}
-                          </span>
+                          </button>
                         );
                       })()}
                       {(() => {

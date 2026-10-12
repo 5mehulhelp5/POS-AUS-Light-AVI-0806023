@@ -290,14 +290,14 @@ export class OrdersService {
         // discount only takes effect if it's higher. Zeroed when the
         // sale price already beat the trade rate (see tradeWins above) —
         // the base is the sale price there, so re-applying trade % on
-        // top would double-discount. On a cashier-re-priced line the
-        // edited price IS the base (the cart applies the trade % to it),
-        // so the auto rate stays regardless of tradeWins.
+        // top would double-discount. A cashier-re-priced line is charged
+        // exactly the typed price, trade or not — no trade % or promotion
+        // on top (Sally, 12 Oct 2026: typed $170 on a trade line came out
+        // at $136). The cost + margin floor below still guards it.
         // A trade customer gets whichever is better: trade rate or promotion.
-        const appliedAutoDiscount = Math.max(
-          tradeWins || item.priceEdited ? autoDiscount : 0,
-          promo.percent,
-        );
+        const appliedAutoDiscount = item.priceEdited
+          ? 0
+          : Math.max(tradeWins ? autoDiscount : 0, promo.percent);
         const effectiveDiscount = Math.max(manualDiscount, appliedAutoDiscount);
         return {
           productId: item.productId,

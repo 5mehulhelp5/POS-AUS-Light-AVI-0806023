@@ -113,6 +113,9 @@ export function linePromoPercent(item: CartItem): number {
   return item.priceEdited ? 0 : item.promoPercent || 0;
 }
 export function effectiveLineDiscount(item: CartItem): number {
+  // A typed price is the price — trade or not (Sally, 12 Oct 2026). Only
+  // a % the cashier adds afterwards comes off it.
+  if (item.priceEdited) return item.discountPercent || 0;
   return Math.max(
     item.discountPercent || 0,
     item.autoDiscountPercent || 0,
@@ -293,8 +296,10 @@ const cartSlice = createSlice({
       if (item) {
         item.unitPrice = Math.max(0, unitPrice);
         item.priceEdited = true;
-        // A price change replaces any manual % discount — keeping both
-        // would double-dip. The trade auto % (company policy) stays.
+        // The typed price is what the customer pays: it replaces any
+        // manual %, and neither the trade rate nor the promotion is taken
+        // off it (Sally, 12 Oct 2026 — typed $170 on a trade line used to
+        // come out at $136).
         item.discountPercent = 0;
       }
       recalculateTotals(state);
