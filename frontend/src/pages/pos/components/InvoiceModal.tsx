@@ -1,4 +1,4 @@
-import { useRef, CSSProperties } from 'react';
+import { useRef, useState, CSSProperties } from 'react';
 import {
   XMarkIcon,
   PrinterIcon,
@@ -167,16 +167,13 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
   };
 
   // Email the invoice (Avi, 16 Sep 2026): reception attaches the PDF
-  // themselves in Outlook, so this saves the PDF to Downloads and opens
-  // the mail client with the customer's address, subject and message
-  // already filled in. A browser can't attach a file to a mailto link,
+  // themselves in Outlook, so this opens the mail client with the
+  // customer's address, subject and message already filled in, then saves
+  // the PDF to Downloads. A browser can't attach a file to a mailto link,
   // hence the two-step. No server-side mail is involved.
+  const [emailBusy, setEmailBusy] = useState(false);
   const handleEmail = async () => {
-    try {
-      await handleSavePdf();
-    } catch {
-      toast.error('Could not save the PDF — use Save PDF and attach it manually');
-    }
+    if (emailBusy) return;
     const to = (invoice.customerEmail || '').trim();
     const customerName = (invoice.customerName || '').trim();
     const subject = `Invoice #${invoice.orderNumber} — Australian Lighting`;
@@ -206,11 +203,23 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
       `mailto:${encodeURIComponent(to)}` +
       `?subject=${encodeURIComponent(subject)}` +
       `&body=${encodeURIComponent(body)}`;
+    // Open the email FIRST, straight from the click. Chrome only lets a
+    // site open the mail program right after a click; building the PDF
+    // first took long enough on a slower till that the email never
+    // opened (Sally, 12 Oct 2026 — Tina's PC: "nothing's coming up").
     window.location.href = href;
-    toast(
-      `Invoice-${invoice.orderNumber}.pdf saved to Downloads — attach it to the email that just opened`,
-      { duration: 8000, icon: '📎' },
-    );
+    setEmailBusy(true);
+    try {
+      await handleSavePdf();
+      toast(
+        `Invoice-${invoice.orderNumber}.pdf saved to Downloads — attach it to the email`,
+        { duration: 8000, icon: '📎' },
+      );
+    } catch {
+      toast.error('Could not save the PDF — use Save PDF and attach it manually');
+    } finally {
+      setEmailBusy(false);
+    }
   };
 
   const addr = splitAddress(invoice.customerAddress);
@@ -258,15 +267,16 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
               <ArrowDownTrayIcon className="h-4 w-4" /> Save PDF
             </button>
             <button
-              className="btn-sm bg-blue-600 text-white flex items-center gap-2"
+              className="btn-sm bg-blue-600 text-white flex items-center gap-2 disabled:opacity-60"
               onClick={handleEmail}
+              disabled={emailBusy}
               title={
                 invoice.customerEmail
-                  ? `Saves the PDF and opens an email to ${invoice.customerEmail}`
-                  : 'Saves the PDF and opens a new email — type the customer address'
+                  ? `Opens an email to ${invoice.customerEmail} and saves the PDF to attach`
+                  : 'Opens a new email (type the customer address) and saves the PDF to attach'
               }
             >
-              <EnvelopeIcon className="h-4 w-4" /> Email
+              <EnvelopeIcon className="h-4 w-4" /> {emailBusy ? 'Saving PDF…' : 'Email'}
             </button>
             <button className="text-gray-400 hover:text-pos-text" onClick={onClose}>
               <XMarkIcon className="h-6 w-6" />
