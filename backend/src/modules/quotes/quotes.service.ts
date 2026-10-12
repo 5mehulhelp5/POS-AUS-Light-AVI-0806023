@@ -270,10 +270,11 @@ export class QuotesService {
   }
 
   async update(id: number, dto: UpdateQuoteDto, userId: number): Promise<Quote> {
-    const existing = await this.quoteRepository.findOne({
-      where: { id },
-      relations: ['items'],
-    });
+    // Deliberately WITHOUT the items relation. Quote.items cascades, so
+    // saving a quote that still held its old lines re-inserted them after
+    // they'd been deleted — every edit duplicated the quote and removed
+    // lines came back (Sally, 12 Oct 2026, Carlo Galati's quote).
+    const existing = await this.quoteRepository.findOne({ where: { id } });
     if (!existing) throw new NotFoundException('Quote not found');
     if (existing.status !== QuoteStatus.OPEN) {
       throw new BadRequestException(
@@ -305,7 +306,6 @@ export class QuotesService {
       isTrade,
     );
     for (const qi of quoteItems) qi.quoteId = id;
-    await this.quoteItemRepository.delete({ quoteId: id });
 
     const afterDiscount = subtotal - totalDiscount;
     const taxAmount = this.round(afterDiscount / 11);
@@ -323,18 +323,24 @@ export class QuotesService {
       expiresAt.setDate(expiresAt.getDate() + defaultExpiry);
     }
 
-    existing.customerId = dto.customerId || null;
-    existing.userId = userId; // whoever last edited
-    existing.subtotal = this.round(subtotal);
-    existing.discountAmount = this.round(totalDiscount);
-    existing.taxAmount = taxAmount;
-    existing.grandTotal = grandTotal;
-    existing.buyerType = buyerType;
-    existing.expiresAt = expiresAt;
-    existing.notes = dto.notes || null;
-
-    await this.quoteRepository.save(existing);
-    await this.quoteItemRepository.save(quoteItems as QuoteItem[]);
+    // Swap the lines and update the header in one transaction: either the
+    // whole edit lands or none of it does. update() touches only these
+    // columns — no cascade, so old lines can't come back.
+    await this.dataSource.transaction(async (m) => {
+      await m.delete(QuoteItem, { quoteId: id });
+      await m.save(QuoteItem, quoteItems as QuoteItem[]);
+      await m.update(Quote, id, {
+        customerId: dto.customerId || null,
+        userId, // whoever last edited
+        subtotal: this.round(subtotal),
+        discountAmount: this.round(totalDiscount),
+        taxAmount,
+        grandTotal,
+        buyerType,
+        expiresAt,
+        notes: dto.notes || null,
+      });
+    });
 
     return this.quoteRepository.findOne({
       where: { id },

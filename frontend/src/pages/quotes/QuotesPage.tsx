@@ -1640,7 +1640,10 @@ export default function QuotesPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-700">
                     {lineItems.map((item, idx) => (
-                      <tr key={item.productId}>
+                      // Index in the key: a product on two lines (old
+                      // duplicated quotes) gave two rows the same key and
+                      // Delete removed the wrong one / appeared to do nothing.
+                      <tr key={`${item.productId}-${idx}`}>
                         <td className="px-3 py-2">
                           <p className="font-medium">{item.name}</p>
                           <p className="text-xs text-gray-400">{item.sku}</p>
