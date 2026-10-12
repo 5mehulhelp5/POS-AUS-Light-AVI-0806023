@@ -341,9 +341,31 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
 
           {/* Product picker + cut calculator */}
           <div className="bg-pos-card rounded-xl border border-gray-700 p-5 mb-4">
-            <label className="block text-sm font-medium text-gray-400 mb-1">
-              Product
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-400">
+                Product
+              </label>
+              {/* Visible switch — the custom option was easy to miss inside
+                  the dropdown (Avi, 12 Oct 2026). */}
+              <div className="flex rounded-lg border border-gray-700 overflow-hidden text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isCustom) setProductId(products[0]?.id ?? FALLBACK_STRIP_PRODUCTS[0].id);
+                  }}
+                  className={`px-3 py-1.5 ${!isCustom ? 'bg-amber-500 text-gray-900' : 'bg-pos-card text-gray-300 hover:text-pos-text'}`}
+                >
+                  From list
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProductId(CUSTOM_ID)}
+                  className={`px-3 py-1.5 border-l border-gray-700 ${isCustom ? 'bg-amber-500 text-gray-900' : 'bg-pos-card text-gray-300 hover:text-pos-text'}`}
+                >
+                  + Custom strip
+                </button>
+              </div>
+            </div>
             <div className="relative">
               <input
                 type="text"

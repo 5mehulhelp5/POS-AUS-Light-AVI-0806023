@@ -151,26 +151,37 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
     printWindow.print();
   };
 
+  const pdfName = `Invoice-${invoice.orderNumber}.pdf`;
+  const pdfOptions = {
+    margin: 10,
+    filename: pdfName,
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+    html2canvas: { scale: 2, useCORS: true },
+  };
+
   const handleSavePdf = async () => {
     const node = invoiceRef.current;
     if (!node) return;
     const html2pdf = (await import('html2pdf.js')).default;
-    await html2pdf()
-      .set({
-        margin: 10,
-        filename: `Invoice-${invoice.orderNumber}.pdf`,
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        html2canvas: { scale: 2, useCORS: true },
-      })
-      .from(node)
-      .save();
+    await html2pdf().set(pdfOptions).from(node).save();
   };
 
-  // Email the invoice (Avi, 16 Sep 2026): reception attaches the PDF
-  // themselves in Outlook, so this opens the mail client with the
-  // customer's address, subject and message already filled in, then saves
-  // the PDF to Downloads. A browser can't attach a file to a mailto link,
-  // hence the two-step. No server-side mail is involved.
+  // The same PDF, kept in memory to go inside the email.
+  const buildPdfBlob = async (): Promise<Blob> => {
+    const node = invoiceRef.current;
+    if (!node) throw new Error('Invoice not ready');
+    const html2pdf = (await import('html2pdf.js')).default;
+    return (await html2pdf().set(pdfOptions).from(node).outputPdf('blob')) as Blob;
+  };
+
+  // Email the invoice with the PDF attached (Sally, 12 Oct 2026: "Can
+  // there be a PDF file attached ... at the moment it's all text"). A
+  // browser can't attach a file to a mailto link, so the POS builds the
+  // whole email itself — customer's address, subject, Sally's message
+  // (16 Sep template) and the invoice PDF — as an unsent Outlook draft
+  // (.eml with "X-Unsent: 1") and downloads it. Opening it from Chrome's
+  // downloads opens Outlook's New Email window with everything in place,
+  // sent from that computer's Outlook account. No server-side mail.
   const [emailBusy, setEmailBusy] = useState(false);
   const handleEmail = async () => {
     if (emailBusy) return;
@@ -189,7 +200,7 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
     const body =
       `Hi${customerName ? ` ${customerName}` : ''},\n\n` +
       `Thank you for your business! This email confirms that invoice #${invoice.orderNumber} for ` +
-      `${money(invoice.grandTotal)} has been generated and is attached/available for your records.\n\n` +
+      `${money(invoice.grandTotal)} has been generated and is attached for your records.\n\n` +
       `Invoice details:\n` +
       `- Invoice Number: ${invoice.orderNumber}\n` +
       `- Issue Date: ${formatDate(invoice.date)}\n` +
@@ -199,32 +210,31 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
       `info@australianlighting.com.au or contact us on 03 9548 9200 (option 1)\n\n` +
       `Thank you for choosing\nAustralian Lighting\n\n` +
       `1704 Dandenong Rd\nOakleigh East Vic 3166\n03 9548 9200\n`;
-    // Write the address(es) plainly: Outlook doesn't decode "%40", so a
-    // fully encoded address left the To box empty (Sally, 12 Oct 2026).
-    // Only characters that would break the link get encoded.
-    const toPart = to
-      .split(/[,;\s]+/)
-      .filter(Boolean)
-      .map((a) => a.replace(/[^A-Za-z0-9@._+-]/g, (c) => encodeURIComponent(c)))
-      .join(',');
-    const href =
-      `mailto:${toPart}` +
-      `?subject=${encodeURIComponent(subject)}` +
-      `&body=${encodeURIComponent(body)}`;
-    // Open the email FIRST, straight from the click. Chrome only lets a
-    // site open the mail program right after a click; building the PDF
-    // first took long enough on a slower till that the email never
-    // opened (Sally, 12 Oct 2026 — Tina's PC: "nothing's coming up").
-    window.location.href = href;
+    const addresses = to.split(/[,;\s]+/).filter(Boolean);
+
     setEmailBusy(true);
     try {
-      await handleSavePdf();
+      const pdf = await buildPdfBlob();
+      const eml = buildEml({
+        to: addresses,
+        subject,
+        body,
+        attachment: { name: pdfName, type: 'application/pdf', base64: await blobToBase64(pdf) },
+      });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([eml], { type: 'message/rfc822' }));
+      a.download = `Invoice-${invoice.orderNumber}.eml`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       toast(
-        `Invoice-${invoice.orderNumber}.pdf saved to Downloads — attach it to the email`,
-        { duration: 8000, icon: '📎' },
+        `Email ready — open Invoice-${invoice.orderNumber}.eml from Chrome's downloads (top right). ` +
+          'It opens in Outlook with the PDF attached; check it and press Send.',
+        { duration: 12000, icon: '📧' },
       );
     } catch {
-      toast.error('Could not save the PDF — use Save PDF and attach it manually');
+      toast.error('Could not build the email — use Save PDF and attach it manually');
     } finally {
       setEmailBusy(false);
     }
@@ -280,11 +290,11 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
               disabled={emailBusy}
               title={
                 invoice.customerEmail
-                  ? `Opens an email to ${invoice.customerEmail} and saves the PDF to attach`
-                  : 'Opens a new email (type the customer address) and saves the PDF to attach'
+                  ? `Creates an email to ${invoice.customerEmail} with the invoice PDF attached`
+                  : 'Creates an email with the invoice PDF attached — type the customer address in Outlook'
               }
             >
-              <EnvelopeIcon className="h-4 w-4" /> {emailBusy ? 'Saving PDF…' : 'Email'}
+              <EnvelopeIcon className="h-4 w-4" /> {emailBusy ? 'Preparing…' : 'Email'}
             </button>
             <button className="text-gray-400 hover:text-pos-text" onClick={onClose}>
               <XMarkIcon className="h-6 w-6" />
@@ -729,3 +739,59 @@ const totVal = (bold = false): CSSProperties => ({
   fontWeight: bold ? 800 : 500,
   minWidth: '120px',
 });
+
+// ---------------------------------------------------------------- email file
+// UTF-8 text -> base64 (btoa only takes Latin-1).
+function utf8Base64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+// An unsent email (RFC 822 / MIME) with one attachment. "X-Unsent: 1"
+// makes Outlook open it as a new message ready to send rather than as a
+// received one. No From header — Outlook uses that computer's account.
+function buildEml(m: {
+  to: string[];
+  subject: string;
+  body: string;
+  attachment: { name: string; type: string; base64: string };
+}): string {
+  const wrap = (b64: string) => b64.replace(/.{1,76}/g, '$&\r\n').trimEnd();
+  const header = (v: string) => (/^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${utf8Base64(v)}?=`);
+  const boundary = `----=_ALPOS_${Date.now().toString(36)}`;
+  const lines = [
+    'X-Unsent: 1',
+    ...(m.to.length ? [`To: ${m.to.join(', ')}`] : []),
+    `Subject: ${header(m.subject)}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="utf-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    wrap(utf8Base64(m.body.replace(/\r?\n/g, '\r\n'))),
+    `--${boundary}`,
+    `Content-Type: ${m.attachment.type}; name="${m.attachment.name}"`,
+    `Content-Disposition: attachment; filename="${m.attachment.name}"`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    wrap(m.attachment.base64),
+    `--${boundary}--`,
+    '',
+  ];
+  return lines.join('\r\n');
+}
