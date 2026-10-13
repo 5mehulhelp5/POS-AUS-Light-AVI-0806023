@@ -228,10 +228,12 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      // The AL POS app window has no downloads button, so say where the
+      // file went (Sally, 13 Oct 2026: "what steps to get this to pop up").
       toast(
-        `Email ready — open Invoice-${invoice.orderNumber}.eml from Chrome's downloads (top right). ` +
-          'It opens in Outlook with the PDF attached; check it and press Send.',
-        { duration: 12000, icon: '📧' },
+        `Email ready: Invoice-${invoice.orderNumber}.eml is in Downloads. Press Ctrl+J and click it ` +
+          '(or open your Downloads folder). It opens in Outlook with the PDF attached. Check it and press Send.',
+        { duration: 15000, icon: '📧' },
       );
     } catch {
       toast.error('Could not build the email — use Save PDF and attach it manually');

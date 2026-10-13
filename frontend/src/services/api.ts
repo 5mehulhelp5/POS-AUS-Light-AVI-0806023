@@ -196,6 +196,9 @@ export const ordersApi = {
   // Doesn't refund; use refundOrder for actual money back.
   adjustPayment: (orderId: number, paymentId: number, amount: number) =>
     api.patch(`/orders/${orderId}/payments/${paymentId}`, { amount }),
+  // Relabel how a payment was taken (EFTPOS -> cash etc.), amount unchanged.
+  changePaymentMethod: (orderId: number, paymentId: number, method: string, reference?: string) =>
+    api.patch(`/orders/${orderId}/payments/${paymentId}/method`, { method, reference }),
 
   createRefund: (
     orderId: number,

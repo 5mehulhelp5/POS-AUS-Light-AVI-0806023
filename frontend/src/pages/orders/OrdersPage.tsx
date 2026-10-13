@@ -232,6 +232,22 @@ export default function OrdersPage() {
 
   const canManage =
     user?.role.name === 'admin' || user?.role.name === 'manager';
+  // Change a payment's method on the order screen (Sally, 13 Oct 2026:
+  // EFTPOS declined after the sale, customer paid cash).
+  const [payEdit, setPayEdit] = useState<{ id: number; method: string; reference: string } | null>(null);
+  const [paySaving, setPaySaving] = useState(false);
+  const payMethodLabel = (m: string) =>
+    m === 'eftpos'
+      ? 'EFTPOS'
+      : m === 'bank_transfer'
+        ? 'Bank Transfer'
+        : m === 'store_credit'
+          ? 'Store Credit'
+          : m === 'cash'
+            ? 'Cash'
+            : m === 'credit_card'
+              ? 'Credit Card'
+              : m;
 
   useEffect(() => {
     fetchOrders();
@@ -1466,6 +1482,102 @@ export default function OrdersPage() {
                 })()}
               </div>
 
+              {/* Payments taken on this order, with Change for managers
+                  (Sally, 13 Oct 2026: "no way to make a change on the
+                  payment" — EFTPOS declined, customer paid cash). */}
+              {(selectedOrder.payments || []).length > 0 && (
+                <div className="border-t border-gray-700 pt-4">
+                  <p className="text-sm text-gray-400 mb-2">Payments</p>
+                  <div className="space-y-2">
+                    {(selectedOrder.payments || []).map((p: any) => (
+                      <div key={p.id} className="flex flex-wrap items-center gap-2 text-sm bg-pos-dark rounded p-2">
+                        <span className="text-gray-400 w-40">
+                          {p.createdAt ? new Date(p.createdAt).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''}
+                        </span>
+                        {payEdit && payEdit.id === p.id ? (
+                          <>
+                            <select
+                              className="input py-1 w-40"
+                              value={payEdit.method}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setPayEdit((cur) => (cur ? { ...cur, method: v } : cur));
+                              }}
+                            >
+                              <option value="cash">Cash</option>
+                              <option value="eftpos">EFTPOS</option>
+                              <option value="bank_transfer">Bank Transfer</option>
+                            </select>
+                            <input
+                              className="input py-1 w-44"
+                              placeholder="Reference (optional)"
+                              value={payEdit.reference}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setPayEdit((cur) => (cur ? { ...cur, reference: v } : cur));
+                              }}
+                            />
+                            <span className="ml-auto font-semibold">${Number(p.amount).toFixed(2)}</span>
+                            <button
+                              className="btn-primary btn-sm"
+                              disabled={paySaving}
+                              onClick={async () => {
+                                const edit = payEdit;
+                                if (!edit) return;
+                                setPaySaving(true);
+                                try {
+                                  await ordersApi.changePaymentMethod(
+                                    selectedOrder.id,
+                                    p.id,
+                                    edit.method,
+                                    edit.reference,
+                                  );
+                                  toast.success(`Payment changed to ${payMethodLabel(edit.method)}`);
+                                  setPayEdit(null);
+                                  await viewOrder(selectedOrder.id);
+                                } catch (err: any) {
+                                  toast.error(err?.response?.data?.message || 'Could not change the payment');
+                                } finally {
+                                  setPaySaving(false);
+                                }
+                              }}
+                            >
+                              {paySaving ? 'Saving…' : 'Save'}
+                            </button>
+                            <button className="btn-secondary btn-sm" disabled={paySaving} onClick={() => setPayEdit(null)}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-semibold">{payMethodLabel(p.method)}</span>
+                            {p.reference && <span className="text-xs text-gray-500">ref {p.reference}</span>}
+                            {p.status && p.status !== 'completed' && (
+                              <span className="text-xs text-amber-400">{p.status}</span>
+                            )}
+                            <span className="ml-auto font-semibold">${Number(p.amount).toFixed(2)}</span>
+                            {canManage && p.method !== 'store_credit' && (
+                              <button
+                                className="text-xs text-primary-400 hover:underline"
+                                onClick={() =>
+                                  setPayEdit({
+                                    id: p.id,
+                                    method: ['cash', 'eftpos', 'bank_transfer'].includes(p.method) ? p.method : 'cash',
+                                    reference: p.reference || '',
+                                  })
+                                }
+                              >
+                                Change
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Free-form staff notes (persist on order.notes). Cashiers
                   use this to jot follow-ups: pickup times, ETAs, restock
                   status. Edit-in-place; save button appears once a draft
@@ -2408,7 +2520,7 @@ export default function OrdersPage() {
                 <span>Processed by:</span>
                 <span>
                   {completedRefund.refund.user
-                    ? `${completedRefund.refund.user.firstName} ${completedRefund.refund.user.lastName}`
+                    ? [completedRefund.refund.user.firstName, completedRefund.refund.user.lastName].filter(Boolean).join(' ')
                     : '—'}
                 </span>
               </div>

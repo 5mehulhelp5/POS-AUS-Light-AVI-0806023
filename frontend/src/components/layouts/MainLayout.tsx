@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
@@ -50,6 +51,56 @@ export default function MainLayout() {
     dispatch(logout());
     navigate('/login');
   };
+
+  // Lock after 20 minutes without use (Sally, 13 Oct 2026: "staff have to
+  // re-enter their passcode if they haven't used the POS for more than
+  // 20mins"). Any mouse / key / touch activity resets it, in any open POS
+  // window (shared through localStorage). The cart isn't touched, so a
+  // sale in progress is still there after the next PIN login.
+  useEffect(() => {
+    const IDLE_LIMIT_MS = 20 * 60 * 1000;
+    const KEY = 'pos_last_activity';
+    let last = Date.now();
+    const mark = () => {
+      try {
+        localStorage.setItem(KEY, String(last));
+      } catch {
+        // storage blocked — this window's own timer still works
+      }
+    };
+    mark();
+    const onActivity = () => {
+      const now = Date.now();
+      // Write at most every 15s; the lock doesn't need finer timing.
+      if (now - last > 15000) {
+        last = now;
+        mark();
+      }
+    };
+    const events = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'wheel'] as const;
+    events.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    const timer = window.setInterval(() => {
+      let seen = last;
+      try {
+        seen = Math.max(last, Number(localStorage.getItem(KEY)) || 0);
+      } catch {
+        // ignore
+      }
+      if (Date.now() - seen >= IDLE_LIMIT_MS) {
+        window.clearInterval(timer);
+        dispatch(logout());
+        navigate('/login');
+        toast('Locked after 20 minutes without use — enter your PIN to continue', {
+          icon: '🔒',
+          duration: 8000,
+        });
+      }
+    }, 30000);
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, onActivity));
+      window.clearInterval(timer);
+    };
+  }, [dispatch, navigate]);
 
   const [theme, setTheme] = useState<Theme>(getTheme);
   const toggleTheme = () => {

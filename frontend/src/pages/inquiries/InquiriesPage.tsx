@@ -361,7 +361,7 @@ export default function InquiriesPage() {
                   </td>
                   <td className="px-4 py-3">
                     {inquiry.customer
-                      ? `${inquiry.customer.firstName} ${inquiry.customer.lastName}`
+                      ? [inquiry.customer.firstName, inquiry.customer.lastName].filter(Boolean).join(' ')
                       : inquiry.contactName || '-'}
                   </td>
                   <td className="px-4 py-3">{getStatusBadge(inquiry.status)}</td>
@@ -372,7 +372,7 @@ export default function InquiriesPage() {
                   </td>
                   <td className="px-4 py-3 text-sm">
                     {inquiry.assignedTo
-                      ? `${inquiry.assignedTo.firstName} ${inquiry.assignedTo.lastName}`
+                      ? [inquiry.assignedTo.firstName, inquiry.assignedTo.lastName].filter(Boolean).join(' ')
                       : <span className="text-gray-500">Unassigned</span>}
                   </td>
                   <td className="px-4 py-3">{inquiry.user.firstName}</td>
@@ -742,7 +742,7 @@ export default function InquiriesPage() {
                   <p className="text-sm text-gray-400">Contact</p>
                   <p>
                     {selectedInquiry.customer
-                      ? `${selectedInquiry.customer.firstName} ${selectedInquiry.customer.lastName}`
+                      ? [selectedInquiry.customer.firstName, selectedInquiry.customer.lastName].filter(Boolean).join(' ')
                       : selectedInquiry.contactName || '-'}
                   </p>
                 </div>
@@ -766,7 +766,7 @@ export default function InquiriesPage() {
                   <p className="text-sm text-gray-400">Assigned To</p>
                   <p>
                     {selectedInquiry.assignedTo
-                      ? `${selectedInquiry.assignedTo.firstName} ${selectedInquiry.assignedTo.lastName}`
+                      ? [selectedInquiry.assignedTo.firstName, selectedInquiry.assignedTo.lastName].filter(Boolean).join(' ')
                       : 'Unassigned'}
                   </p>
                 </div>

@@ -1245,7 +1245,7 @@ export default function CustomersPage() {
                                   : tx.note || '—'}
                             </td>
                             <td className="px-3 py-2 text-xs text-gray-400">
-                              {tx.user ? `${tx.user.firstName} ${tx.user.lastName}` : '—'}
+                              {tx.user ? [tx.user.firstName, tx.user.lastName].filter(Boolean).join(' ') : '—'}
                             </td>
                             <td
                               className={`px-3 py-2 text-right font-medium ${

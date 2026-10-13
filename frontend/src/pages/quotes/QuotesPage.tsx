@@ -900,7 +900,7 @@ export default function QuotesPage() {
                   <td className="px-4 py-3 font-medium">{quote.quoteNumber}</td>
                   <td className="px-4 py-3">
                     {quote.customer
-                      ? `${quote.customer.firstName} ${quote.customer.lastName}`
+                      ? [quote.customer.firstName, quote.customer.lastName].filter(Boolean).join(' ')
                       : 'Walk-in'}
                   </td>
                   <td className="px-4 py-3">{quote.itemCount}</td>
@@ -1010,7 +1010,7 @@ export default function QuotesPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-400">Customer</p>
-                    <p>{selectedQuote.customer ? `${selectedQuote.customer.firstName} ${selectedQuote.customer.lastName}` : 'Walk-in'}</p>
+                    <p>{selectedQuote.customer ? [selectedQuote.customer.firstName, selectedQuote.customer.lastName].filter(Boolean).join(' ') : 'Walk-in'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-400">Created By</p>
@@ -1858,7 +1858,7 @@ export default function QuotesPage() {
                   <span className="text-gray-400">Customer</span>
                   <span>
                     {quote.customer
-                      ? `${quote.customer.firstName} ${quote.customer.lastName}`
+                      ? [quote.customer.firstName, quote.customer.lastName].filter(Boolean).join(' ')
                       : 'Walk-in'}
                   </span>
                 </div>

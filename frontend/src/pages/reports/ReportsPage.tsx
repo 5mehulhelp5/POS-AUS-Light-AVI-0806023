@@ -2,7 +2,9 @@ import { ReactNode, useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store';
-import { reportsApi, ReportRange } from '../../services/api';
+import { reportsApi, ReportRange, ordersApi } from '../../services/api';
+import { buildInvoiceData } from '../../utils/orderInvoice';
+import InvoiceModal from '../pos/components/InvoiceModal';
 import {
   money, int, pct, change, dateTime, dateOnly, periodLabel, presetRange, PRESETS, Preset,
   StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col,
@@ -733,7 +735,7 @@ function CustomerHistory({ id, onClose }: { id: number; onClose: () => void }) {
 
 // ============================================================ BACKORDERS
 type BoLine = {
-  lineId: number; orderNumber: string; orderedAt: string; daysWaiting: number; status: string;
+  lineId: number; orderId: number; orderNumber: string; orderedAt: string; daysWaiting: number; status: string;
   customer: string; company: string | null; phone: string | null; sku: string; name: string; qty: number; value: number;
   // Ex GST (Sally, 8 Oct 2026: wholesalers' minimum orders). Null = no cost known.
   unitCostEx: number | null; costEx: number | null;
@@ -765,6 +767,22 @@ function Backorders() {
   const filtered = !!(from || to);
   const [printing, setPrinting] = useState(false);
   const [poFor, setPoFor] = useState<BoGroup | null>(null);
+  // Order number opens that sale's invoice (Sally, 13 Oct 2026: "click on
+  // the actual order and it takes them to that invoice").
+  const [invoiceData, setInvoiceData] = useState<any>(null);
+  const openInvoice = async (orderId: number) => {
+    try {
+      const [full, refundsRes] = await Promise.all([
+        ordersApi.getOrder(orderId),
+        ordersApi.getRefunds(orderId).catch(() => null),
+      ]);
+      const o = full.data?.data?.order;
+      if (!o) throw new Error('not found');
+      setInvoiceData(buildInvoiceData(o, undefined, refundsRes?.data?.data?.refunds || []));
+    } catch {
+      toast.error('Could not open that invoice');
+    }
+  };
 
   // Date/time filter first, then regroup totals so cards / headers / PO match it.
   const dated: BoGroup[] = (data?.suppliers || [])
@@ -797,7 +815,19 @@ function Backorders() {
   const selectedGroup = supplier === 'all' ? null : groups[0] || null;
 
   const lineCols: Col<BoLine>[] = [
-    { key: 'o', label: 'Order', value: (r) => r.orderNumber },
+    {
+      key: 'o', label: 'Order', value: (r) => r.orderNumber,
+      render: (r) => (
+        <button
+          type="button"
+          className="text-primary-400 font-semibold hover:underline whitespace-nowrap"
+          title="Open this invoice"
+          onClick={() => openInvoice(r.orderId)}
+        >
+          {r.orderNumber}
+        </button>
+      ),
+    },
     { key: 'd', label: 'Ordered', value: (r) => r.orderedAt, render: (r) => dateTime(r.orderedAt) },
     {
       key: 'w', label: 'Waiting', align: 'right', value: (r) => r.daysWaiting,
@@ -947,6 +977,7 @@ function Backorders() {
             current cost, else the cost when it was sold, else the supplier price list. Pick a supplier and use Create Purchase Order to
             turn its lines into an editable order.
           </Note>
+          {invoiceData && <InvoiceModal invoice={invoiceData} onClose={() => setInvoiceData(null)} />}
           {poFor && (
             <PurchaseOrderEditor
               supplier={poFor.supplier}

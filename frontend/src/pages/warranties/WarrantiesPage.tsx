@@ -249,7 +249,7 @@ export default function WarrantiesPage() {
                       </td>
                       <td className="px-3 py-3 text-sm">
                         {w.customer
-                          ? `${w.customer.firstName} ${w.customer.lastName}`
+                          ? [w.customer.firstName, w.customer.lastName].filter(Boolean).join(' ')
                           : w.contactName || '—'}
                         {w.contactPhone && (
                           <div className="text-xs text-gray-500">{w.contactPhone}</div>

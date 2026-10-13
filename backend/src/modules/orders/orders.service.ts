@@ -1504,6 +1504,65 @@ export class OrdersService {
     });
   }
 
+  // Change how a recorded payment was taken — e.g. EFTPOS declined after
+  // the sale was put through and the customer paid cash (Sally, 13 Oct
+  // 2026). The amount doesn't change, so this is allowed on completed
+  // orders too; it's logged in the order history with who did it. Store
+  // credit is excluded both ways because it moves the customer's credit
+  // balance, which a relabel can't do.
+  async changePaymentMethod(
+    orderId: number,
+    paymentId: number,
+    method: string,
+    reference: string | undefined,
+    userId: number,
+  ): Promise<Order> {
+    const allowed = [PaymentMethod.CASH, PaymentMethod.EFTPOS, PaymentMethod.BANK_TRANSFER];
+    if (!allowed.includes(method as PaymentMethod)) {
+      throw new BadRequestException('Payment can be changed to Cash, EFTPOS or Bank Transfer');
+    }
+    return this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, { where: { id: orderId } });
+      if (!order) throw new BadRequestException('Order not found');
+      const payment = await manager.findOne(Payment, { where: { id: paymentId, orderId } });
+      if (!payment) throw new BadRequestException('Payment not found on this order');
+      if (payment.method === PaymentMethod.STORE_CREDIT) {
+        throw new BadRequestException("A store credit payment can't be changed — refund it instead");
+      }
+      const label = (m: string) =>
+        m === 'eftpos' ? 'EFTPOS' : m === 'bank_transfer' ? 'Bank Transfer' : m === 'cash' ? 'Cash' : m;
+      const from = payment.method;
+      if (from === method && reference === undefined) {
+        return (await this.findById(orderId)) as Order;
+      }
+      payment.method = method as PaymentMethod;
+      if (reference !== undefined) payment.reference = reference.trim() || null;
+      // A cash tender figure means nothing on a card / transfer payment.
+      if (method !== PaymentMethod.CASH) payment.amountTendered = null;
+      await manager.save(payment);
+
+      const editor = await manager.findOne(User, { where: { id: userId } });
+      const who = editor
+        ? [editor.firstName, editor.lastName].filter(Boolean).join(' ')
+        : `user #${userId}`;
+      await manager.save(
+        manager.create(OrderEvent, {
+          orderId,
+          userId,
+          type: 'payment_method_changed',
+          description:
+            `Payment of $${Number(payment.amount).toFixed(2)} changed from ${label(from)} to ` +
+            `${label(method)} by ${who}.`,
+        }),
+      );
+      // eslint-disable-next-line no-console
+      console.log(
+        `[orders.changePaymentMethod] order=${order.orderNumber} payment=${paymentId} ${from}->${method} userId=${userId}`,
+      );
+      return (await this.findById(orderId)) as Order;
+    });
+  }
+
   // -------------------------------------------------------------------
   // Layby + backorder helpers
   // -------------------------------------------------------------------

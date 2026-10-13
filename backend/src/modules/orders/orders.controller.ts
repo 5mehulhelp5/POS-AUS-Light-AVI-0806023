@@ -330,6 +330,28 @@ export class OrdersController {
     };
   }
 
+  // Fix how a payment was taken (EFTPOS -> cash etc.) without refunding
+  // and redoing the sale (Sally, 13 Oct 2026). Managers and admins.
+  @Patch(':id/payments/:paymentId/method')
+  @UseGuards(RolesGuard)
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER)
+  @ApiOperation({ summary: 'Change the method of a recorded payment (amount unchanged)' })
+  async changePaymentMethod(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('paymentId', ParseIntPipe) paymentId: number,
+    @Body() body: { method: string; reference?: string },
+    @CurrentUser() user: any,
+  ) {
+    const order = await this.ordersService.changePaymentMethod(
+      id,
+      paymentId,
+      String(body?.method || ''),
+      body?.reference,
+      user.id,
+    );
+    return { success: true, data: { order: { id: order.id } } };
+  }
+
   @Post(':id/refund')
   @UseGuards(RolesGuard)
   @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
