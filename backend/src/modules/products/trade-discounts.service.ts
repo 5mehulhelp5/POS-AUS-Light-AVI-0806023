@@ -129,6 +129,15 @@ export class TradeDiscountsService {
     if (promo.endsOn && TradeDiscountsService.storeToday() > promo.endsOn) {
       return { percent: 0, label: null, reason: 'off' };
     }
+    // Category-based: if a caller loaded the product without its
+    // categories, fetch them rather than silently finding nothing in scope.
+    if (!product.categories) {
+      const full = await this.productRepository.findOne({
+        where: { id: product.id },
+        relations: ['categories'],
+      });
+      product.categories = full?.categories || [];
+    }
     const ids = new Set<number>((product.categories || []).map((c) => c.id));
     let inScope = false;
     for (const n of promo.includeCategories) {

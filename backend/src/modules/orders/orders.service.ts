@@ -181,10 +181,15 @@ export class OrdersService {
     const productIds = dto.items
       .filter((i) => !isCustomItem(i))
       .map((i) => i.productId);
+    // Categories are needed for EVERY priced sale, not just trade: the
+    // store-wide promotion (fans 10%) matches on them too. Loading them
+    // only for trade meant retail promo sales were priced without the
+    // promotion here while the till showed it, and the payment check
+    // rejected the sale (Sally, 14 Oct 2026: Skyfan $296.10 vs $329).
     const products =
       productIds.length === 0
         ? []
-        : isTradeOrder && !dto.trustItemUnitPrices
+        : !dto.trustItemUnitPrices
           ? await this.productsService.findByIdsWithCategories(productIds)
           : await this.productsService.findByIds(productIds);
 
