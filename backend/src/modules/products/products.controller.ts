@@ -3,6 +3,7 @@ import {
   Get,
   Put,
   Patch,
+  Post,
   Body,
   Param,
   Query,
@@ -470,6 +471,50 @@ export class ProductsController {
         percent: auto.percent,
       },
     };
+  }
+
+  // Instant below-margin check for a price typed in the cart (Sally, 14
+  // Oct 2026: "can the warning for below cost price pop up as soon as
+  // user changes the price ... than at checkout?"). Same rule as the
+  // checkout guard: cost + minimum margin, and a trade price set on the
+  // product counts as approved for a trade sale. Sales staff get yes/no
+  // only — the minimum price would reveal the cost — managers and admins
+  // also get the minimum.
+  @Post('margin-check')
+  @ApiOperation({ summary: 'Is this price below cost + minimum margin?' })
+  async marginCheck(
+    @Body() body: { items?: Array<{ productId: number; price: number; trade?: boolean }> },
+    @CurrentUser() user: any,
+  ) {
+    const items = (Array.isArray(body?.items) ? body.items : []).filter(
+      (i) => Number(i?.productId) > 0 && Number.isFinite(Number(i?.price)),
+    );
+    const products = items.length
+      ? await this.productsService.findByIds(items.map((i) => Number(i.productId)))
+      : [];
+    const multiplier = await this.tradeDiscounts.getMinMarginMultiplier();
+    const seeCost = this.canSeeCost(user);
+    const results: Record<number, { below: boolean; minPrice?: number }> = {};
+    for (const it of items) {
+      const id = Number(it.productId);
+      const p = products.find((x) => x.id === id);
+      const cost = p?.cost != null ? Number(p.cost) : 0;
+      if (!p || !(cost > 0)) {
+        results[id] = { below: false };
+        continue;
+      }
+      const price = Number(it.price);
+      const approved =
+        !!it.trade &&
+        p.tradePrice != null &&
+        Number(p.tradePrice) > 0 &&
+        price >= Number(p.tradePrice) - 0.005;
+      const below = !approved && price < cost * multiplier - 0.005;
+      results[id] = seeCost
+        ? { below, minPrice: Math.round(cost * multiplier * 100) / 100 }
+        : { below };
+    }
+    return { success: true, data: { results } };
   }
 
   @Get('categories')

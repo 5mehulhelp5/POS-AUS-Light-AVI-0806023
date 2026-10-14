@@ -91,6 +91,10 @@ export const productsApi = {
     confirmBelowFloor = false,
   ) => api.patch(`/products/${id}/trade-price`, { tradePrice, confirmBelowFloor }),
 
+  // Below cost + minimum margin? (yes/no; managers also get minPrice)
+  marginCheck: (items: Array<{ productId: number; price: number; trade?: boolean }>) =>
+    api.post('/products/margin-check', { items }),
+
   // Checkout promotion (fans 10%, Oct 2026): manager/admin read, admin write.
   getPromotion: () => api.get('/products/promotion'),
   // Running promotion for the red banner on the POS (any staff).

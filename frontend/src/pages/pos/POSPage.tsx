@@ -34,6 +34,7 @@ import {
   setPromoDiscounts,
   setExchangeContext,
   loadQuote,
+  effectiveLineDiscount,
 } from '../../store/slices/cartSlice';
 import ProductGrid from './components/ProductGrid';
 import CartPanel from './components/CartPanel';
@@ -619,6 +620,47 @@ export default function POSPage() {
     setShowReview(true);
   };
 
+  // Is this per-unit price under cost + minimum margin? Blocks the change
+  // with a message right away. Managers/admins have the cost on screen;
+  // for sales staff (no cost in the browser) the server answers yes/no
+  // (Sally, 14 Oct 2026: "pop up as soon as user changes the price ...
+  // than at checkout"). No override for anyone (Sally, 9 Sep: "see the
+  // message, hit Cancel and adjust the price"). If the check can't be
+  // made, checkout still enforces it.
+  const belowMarginBlocked = async (productId: number, price: number): Promise<boolean> => {
+    if (!(productId > 0)) return false; // custom item — no catalogue cost
+    const cost = costMap[productId];
+    if (cost != null && cost > 0) {
+      const floor = cost * (1 + minMarginPct / 100);
+      if (price < floor - 0.005) {
+        toast.error(
+          `$${price.toFixed(2)} is below the minimum margin ` +
+            `(cost + ${fmtPct(minMarginPct)}% = $${floor.toFixed(2)}) — adjust the price`,
+        );
+        return true;
+      }
+      return false;
+    }
+    try {
+      const r = await productsApi.marginCheck([
+        { productId, price, trade: cart.customerIsTrade },
+      ]);
+      const res = r.data?.data?.results?.[productId];
+      if (res?.below) {
+        toast.error(
+          res.minPrice != null
+            ? `$${price.toFixed(2)} is below the minimum margin (lowest $${Number(res.minPrice).toFixed(2)}) — adjust the price`
+            : `$${price.toFixed(2)} is below the minimum margin for this product — adjust the price or ask a manager`,
+          { duration: 8000 },
+        );
+        return true;
+      }
+    } catch {
+      // network hiccup — the checkout guard still applies
+    }
+    return false;
+  };
+
   // Cost map keyed by productId — feeds the cart's "below cost" warning
   // for trade customers. Only includes products in the currently visible
   // grid, so a cart item carried over from a previous page won't trigger
@@ -1026,27 +1068,22 @@ export default function POSPage() {
         onUpdateQuantity={(productId, qty) =>
           dispatch(updateQuantity({ productId, quantity: qty }))
         }
-        onSetItemDiscount={(productId, discountPercent) =>
-          dispatch(setItemDiscount({ productId, discountPercent }))
-        }
-        onSetItemUnitPrice={(productId, unitPrice) => {
-          // Sally, 7 Sep: editing a price straight in the cart must hit
-          // the minimum-margin floor immediately, not only at payment.
-          // costMap only has values for manager/admin (cost is hidden
-          // from sales staff by the API) — staff are still hard-blocked
-          // server-side at order creation.
-          const cost = costMap[productId];
-          const floor = cost != null ? cost * (1 + minMarginPct / 100) : 0;
-          if (cost != null && cost > 0 && unitPrice < floor - 0.005) {
-            // No override for anyone (Sally, 9 Sep: "take away the
-            // option to set anyway — see the message, hit Cancel and
-            // adjust the price"). Managers/admins included.
-            toast.error(
-              `$${unitPrice.toFixed(2)} is below the minimum margin ` +
-                `(cost + ${fmtPct(minMarginPct)}% = $${floor.toFixed(2)}) — adjust the price`,
-            );
-            return;
+        onSetItemDiscount={async (productId, discountPercent) => {
+          // A line % that takes the price under the margin is stopped
+          // straight away too, not at payment (Sally, 14 Oct 2026).
+          const item = cart.items.find((i) => i.productId === productId);
+          if (item && discountPercent > 0) {
+            const pct = effectiveLineDiscount({ ...item, discountPercent });
+            const net = Math.round(item.unitPrice * (1 - pct / 100) * 100) / 100;
+            if (await belowMarginBlocked(productId, net)) return;
           }
+          dispatch(setItemDiscount({ productId, discountPercent }));
+        }}
+        onSetItemUnitPrice={async (productId, unitPrice) => {
+          // Editing a price straight in the cart hits the minimum-margin
+          // floor immediately, not only at payment (Sally, 7 Sep; for every
+          // user since 14 Oct 2026).
+          if (await belowMarginBlocked(productId, unitPrice)) return;
           dispatch(setItemUnitPrice({ productId, unitPrice }));
         }}
         onSetCartDiscount={(discount) => dispatch(setCartDiscount(discount))}
