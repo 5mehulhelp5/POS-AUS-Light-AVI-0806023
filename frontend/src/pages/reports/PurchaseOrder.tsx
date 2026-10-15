@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   ArrowDownTrayIcon,
@@ -8,6 +8,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { money, ymd } from './reportKit';
+import { reportsApi } from '../../services/api';
 
 // Purchase order from Reports > Backorders (Sally, 8 Oct 2026): "convert
 // all backordered items for a selected wholesaler directly into a
@@ -29,6 +30,9 @@ const STORE = {
 };
 
 export interface PoSourceLine {
+  // The backorder line this came from — marked with the PO number when
+  // the order is sent.
+  lineId?: number;
   sku: string;
   name: string;
   qty: number;
@@ -40,6 +44,7 @@ export interface PoSourceLine {
 
 interface PoLine {
   key: number;
+  lineId?: number;
   qty: string;
   description: string;
   cost: string; // ex GST, as typed
@@ -66,6 +71,7 @@ const num = (s: string): number => {
 let nextKey = 1;
 const toLine = (l: PoSourceLine): PoLine => ({
   key: nextKey++,
+  lineId: l.lineId,
   qty: String(l.qty),
   description: !l.sku || /^custom$/i.test(l.sku) ? l.name : `${l.sku} — ${l.name}`,
   cost: l.unitCostEx != null ? l.unitCostEx.toFixed(2) : '',
@@ -78,15 +84,38 @@ export default function PurchaseOrderEditor({
   lines: source,
   orderedBy,
   onClose,
+  onMarkedSent,
 }: {
   supplier: string;
   lines: PoSourceLine[];
-  orderedBy: string | null | undefined;
+  orderedBy?: string | null;
   onClose: () => void;
+  // Called after "Mark as sent" records the PO against the backorder lines.
+  onMarkedSent?: (poNumber: string) => void;
 }) {
   const [dateOrdered, setDateOrdered] = useState(ymd(new Date()));
   const [company, setCompany] = useState(supplier === 'Unknown supplier' ? '' : supplier);
   const [orderNo, setOrderNo] = useState(defaultOrderNumber(orderedBy));
+  const [orderNoTouched, setOrderNoTouched] = useState(false);
+  const [marking, setMarking] = useState(false);
+  // PO numbers come from the POS — supplier initial + date + running
+  // number, never repeated (Sally, 15 Oct 2026). Still editable.
+  useEffect(() => {
+    let cancelled = false;
+    reportsApi
+      .nextPoNumber(supplier)
+      .then((r) => {
+        const n = r.data?.data?.poNumber;
+        if (!cancelled && n) setOrderNo((cur) => (orderNoTouched ? cur : n));
+      })
+      .catch(() => {
+        // keep the local default
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplier]);
   const [lines, setLines] = useState<PoLine[]>(() => source.map(toLine));
   const [printing, setPrinting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -146,7 +175,14 @@ export default function PurchaseOrderEditor({
           </div>
           <div>
             <label className="block text-xs text-gray-400 mb-1">Order no.</label>
-            <input className="input font-mono" value={orderNo} onChange={(e) => setOrderNo(e.target.value)} />
+            <input
+              className="input font-mono"
+              value={orderNo}
+              onChange={(e) => {
+                setOrderNoTouched(true);
+                setOrderNo(e.target.value);
+              }}
+            />
           </div>
         </div>
 
@@ -231,6 +267,34 @@ export default function PurchaseOrderEditor({
           <button className="btn-primary flex items-center gap-2" onClick={download} disabled={busy || used.length === 0}>
             <ArrowDownTrayIcon className="h-5 w-5" /> {busy ? 'Building…' : 'Download Excel'}
           </button>
+          {onMarkedSent && (
+            <button
+              className="btn-success flex items-center gap-2"
+              disabled={marking || !orderNo.trim() || !used.some((l) => l.lineId)}
+              title="Record this PO on the backorder lines — they show the PO number and each customer's order gets an internal note"
+              onClick={async () => {
+                const lineIds = used.map((l) => l.lineId).filter((v): v is number => !!v);
+                if (lineIds.length === 0) return;
+                setMarking(true);
+                try {
+                  const r = await reportsApi.markPurchaseOrder({
+                    supplier: company.trim() || supplier,
+                    lineIds,
+                    poNumber: orderNo.trim(),
+                  });
+                  const po = r.data?.data?.poNumber || orderNo.trim();
+                  toast.success(`PO ${po} recorded on ${r.data?.data?.lines ?? lineIds.length} backorder line(s)`);
+                  onMarkedSent(po);
+                } catch (e: any) {
+                  toast.error(e?.response?.data?.message || 'Could not record the PO');
+                } finally {
+                  setMarking(false);
+                }
+              }}
+            >
+              {marking ? 'Saving…' : 'Mark as sent to supplier'}
+            </button>
+          )}
         </div>
       </div>
 

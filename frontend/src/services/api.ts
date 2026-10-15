@@ -404,6 +404,11 @@ export const reportsApi = {
   customers: (params: ReportRange & { limit?: number }) => api.get('/reports/customers', { params }),
   customerHistory: (id: number) => api.get(`/reports/customers/${id}/history`),
   backorders: () => api.get('/reports/backorders'),
+  // Purchase orders for backorders (Sally, 15 Oct 2026)
+  nextPoNumber: (supplier: string) =>
+    api.get('/reports/backorders/next-po-number', { params: { supplier } }),
+  markPurchaseOrder: (data: { supplier: string; lineIds: number[]; poNumber?: string }) =>
+    api.post('/reports/backorders/purchase-orders', data),
 };
 
 export interface ReportRange {

@@ -37,6 +37,11 @@ const managerNavItems = [
   { to: '/reports', label: 'Reports', icon: ChartBarIcon },
 ];
 
+// Sales staff get the Backorders report only, read-only (Sally, 15 Oct 2026).
+const staffNavItems = [
+  { to: '/reports', label: 'Backorders', icon: ChartBarIcon },
+];
+
 const adminNavItems = [
   { to: '/competitor-prices', label: 'Prices', icon: CurrencyDollarIcon },
   { to: '/settings', label: 'Settings', icon: Cog6ToothIcon },
@@ -140,7 +145,7 @@ export default function MainLayout() {
             </NavLink>
           ))}
 
-          {isManagerOrAdmin && managerNavItems.map((item) => (
+          {(isManagerOrAdmin ? managerNavItems : staffNavItems).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

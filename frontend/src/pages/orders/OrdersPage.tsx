@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 import { ordersApi, syncApi, customersApi } from '../../services/api';
@@ -20,6 +20,7 @@ import {
   CheckCircleIcon,
   ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
+import { formatPhone } from '../../utils/phone';
 
 interface Order {
   id: number;
@@ -280,6 +281,19 @@ export default function OrdersPage() {
       setIsLoading(false);
     }
   };
+
+  // Opened from elsewhere with an order to show (Reports > Backorders
+  // order number, Sally 15 Oct 2026) — open it, then clear the state so a
+  // refresh doesn't reopen it.
+  const location = useLocation();
+  useEffect(() => {
+    const id = Number((location.state as any)?.openOrderId);
+    if (id > 0) {
+      viewOrder(id);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const viewOrder = async (id: number) => {
     try {
@@ -1182,6 +1196,65 @@ export default function OrdersPage() {
                 </div>
               </div>
 
+              {/* Customer details on the order (Sally, 15 Oct 2026: "name,
+                  business name, address and phone number and email"). */}
+              {(selectedOrder.customer || selectedOrder.customerNameSnapshot) && (() => {
+                const c = selectedOrder.customer;
+                const name = c
+                  ? [c.firstName, c.lastName].filter(Boolean).join(' ')
+                  : selectedOrder.customerNameSnapshot;
+                const address = c
+                  ? [c.billingStreet, c.billingCity, c.billingState, c.billingPostcode].filter(Boolean).join(', ')
+                  : '';
+                return (
+                  <div className="bg-pos-dark rounded-lg p-4 text-sm">
+                    <p className="text-xs text-gray-400 uppercase mb-2">Customer</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+                      <div>
+                        <span className="text-gray-400">Name: </span>
+                        <span className="font-semibold">{name}</span>
+                        {c?.isTrade && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/40">
+                            TRADE
+                          </span>
+                        )}
+                      </div>
+                      {c?.company && (
+                        <div>
+                          <span className="text-gray-400">Business: </span>
+                          {c.company}
+                        </div>
+                      )}
+                      {(c?.phone || c?.mobile) && (
+                        <div>
+                          <span className="text-gray-400">Phone: </span>
+                          {formatPhone(c.phone || c.mobile)}
+                        </div>
+                      )}
+                      {c?.email && (
+                        <div>
+                          <span className="text-gray-400">Email: </span>
+                          <a href={`mailto:${c.email}`} className="text-primary-400 hover:underline">
+                            {c.email}
+                          </a>
+                        </div>
+                      )}
+                      {address && (
+                        <div className="md:col-span-2">
+                          <span className="text-gray-400">Address: </span>
+                          {address}
+                        </div>
+                      )}
+                      {!c && (
+                        <div className="text-gray-500 italic md:col-span-2">
+                          Not linked to a saved customer — use Link Customer to attach one.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="bg-pos-dark rounded-lg p-4">
                 <p className="text-xs text-gray-400 uppercase mb-2">
                   Items on this {selectedOrder.orderType === 'layby' ? 'Lay By' : 'Order'}
@@ -1592,9 +1665,9 @@ export default function OrdersPage() {
                       onClick={() =>
                         setNotesDraft(selectedOrder.notes || '')
                       }
-                      className="text-xs text-primary-400 hover:text-primary-300"
+                      className="btn-secondary btn-sm"
                     >
-                      {selectedOrder.notes ? 'Edit' : 'Add note'}
+                      {selectedOrder.notes ? 'Edit note' : '+ Add note'}
                     </button>
                   )}
                 </div>
@@ -1646,9 +1719,9 @@ export default function OrdersPage() {
                       onClick={() =>
                         setInternalNotesDraft(selectedOrder.internalNotes || '')
                       }
-                      className="text-xs text-primary-400 hover:text-primary-300"
+                      className="btn-secondary btn-sm"
                     >
-                      {selectedOrder.internalNotes ? 'Edit' : 'Add note'}
+                      {selectedOrder.internalNotes ? 'Edit note' : '+ Add note'}
                     </button>
                   )}
                 </div>
@@ -2320,7 +2393,7 @@ export default function OrdersPage() {
                     <p className="text-xs text-gray-400">
                       ID: {c.id}
                       {c.email ? ` | ${c.email}` : ''}
-                      {c.phone ? ` | ${c.phone}` : ''}
+                      {c.phone ? ` | ${formatPhone(c.phone)}` : ''}
                     </p>
                   </button>
                 ))}
@@ -2494,7 +2567,7 @@ export default function OrdersPage() {
                     {(c?.phone || c?.mobile) && (
                       <div className="flex justify-between">
                         <span>Phone:</span>
-                        <span>{c.phone || c.mobile}</span>
+                        <span>{formatPhone(c.phone || c.mobile)}</span>
                       </div>
                     )}
                     {c?.email && (

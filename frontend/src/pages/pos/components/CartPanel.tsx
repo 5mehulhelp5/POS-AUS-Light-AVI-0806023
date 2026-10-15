@@ -19,6 +19,7 @@ import { competitorApi, customersApi } from '../../../services/api';
 import { fmtPct } from '../../../utils/pricingConfig';
 import { effectiveLineDiscount, lineDiscountSource } from '../../../store/slices/cartSlice';
 import { posImage } from '../../../utils/imageUrl';
+import { formatPhone } from '../../../utils/phone';
 
 interface CartPanelProps {
   items: CartItem[];
@@ -1080,7 +1081,7 @@ export default function CartPanel({
                               )}
                             </p>
                             <p className="text-xs text-gray-400">
-                              ID: {c.id} {c.email ? `| ${c.email}` : ''} {c.phone ? `| ${c.phone}` : ''}
+                              ID: {c.id} {c.email ? `| ${c.email}` : ''} {c.phone ? `| ${formatPhone(c.phone)}` : ''}
                             </p>
                           </button>
                           {/* One-click trade on/off, right where staff find the customer. */}

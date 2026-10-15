@@ -21,6 +21,7 @@ import {
 } from '@heroicons/react/24/outline';
 import InvoiceModal from '../pos/components/InvoiceModal';
 import { buildInvoiceData } from '../../utils/orderInvoice';
+import { formatPhone } from '../../utils/phone';
 
 interface Customer {
   id: number;
@@ -660,7 +661,7 @@ export default function CustomersPage() {
                     {(customer.phone || customer.mobile) && (
                       <div className="flex items-center gap-2 text-sm text-gray-400">
                         <PhoneIcon className="h-4 w-4" />
-                        <span>{customer.mobile || customer.phone}</span>
+                        <span>{formatPhone(customer.mobile || customer.phone)}</span>
                       </div>
                     )}
                   </div>
@@ -728,7 +729,7 @@ export default function CustomersPage() {
                     {(selectedCustomer.phone || selectedCustomer.mobile) && (
                       <span className="flex items-center gap-1">
                         <PhoneIcon className="h-3 w-3" />
-                        {selectedCustomer.mobile || selectedCustomer.phone}
+                        {formatPhone(selectedCustomer.mobile || selectedCustomer.phone)}
                       </span>
                     )}
                   </div>

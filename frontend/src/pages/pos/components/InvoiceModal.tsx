@@ -7,6 +7,7 @@ import {
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import { CartItem } from '../../../store/slices/cartSlice';
+import { formatPhone } from '../../../utils/phone';
 
 // Company block printed at the top + footer of every invoice. Matches the
 // legal Australian Lighting & Fans (Sunridge) tax-invoice template.
@@ -384,7 +385,7 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
               {invoice.customerPhone && (
                 <>
                   <div style={{ fontSize: '11px', color: MUTED, marginTop: '10px' }}>Phone</div>
-                  <div>{invoice.customerPhone}</div>
+                  <div>{formatPhone(invoice.customerPhone)}</div>
                 </>
               )}
               {invoice.customerEmail && (

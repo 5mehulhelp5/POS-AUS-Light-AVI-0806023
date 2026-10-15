@@ -81,6 +81,16 @@ export class OrderItem {
   @Column({ name: 'backorder_fulfilled_at', type: 'timestamp', nullable: true })
   backorderFulfilledAt: Date | null;
 
+  // The purchase order this backorder line was ordered from the supplier
+  // on (Reports > Backorders, "Mark as sent", Sally 15 Oct 2026). Null =
+  // not ordered yet.
+  @Index()
+  @Column({ name: 'po_number', type: 'varchar', length: 40, nullable: true })
+  poNumber: string | null;
+
+  @Column({ name: 'po_sent_at', type: 'timestamp', nullable: true })
+  poSentAt: Date | null;
+
   // Layby hold. True means the item stays with the store until the layby
   // balance is paid in full — even though stock was available at time
   // of sale. Lets a single order mix "take now" lines with held lines:

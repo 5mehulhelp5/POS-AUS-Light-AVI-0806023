@@ -7,6 +7,7 @@ import {
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { suppliersApi, warrantiesApi } from '../../services/api';
+import { formatPhone } from '../../utils/phone';
 
 interface Warranty {
   id: number;
@@ -252,7 +253,7 @@ export default function WarrantiesPage() {
                           ? [w.customer.firstName, w.customer.lastName].filter(Boolean).join(' ')
                           : w.contactName || '—'}
                         {w.contactPhone && (
-                          <div className="text-xs text-gray-500">{w.contactPhone}</div>
+                          <div className="text-xs text-gray-500">{formatPhone(w.contactPhone)}</div>
                         )}
                       </td>
                       <td className="px-3 py-3 text-sm">

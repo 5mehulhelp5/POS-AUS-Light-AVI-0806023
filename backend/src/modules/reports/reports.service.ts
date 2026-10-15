@@ -2,6 +2,9 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { DayClose } from './entities/day-close.entity';
+import { PurchaseOrder } from './entities/purchase-order.entity';
+import { OrderEvent } from '../orders/entities/order-event.entity';
+import { User } from '../users/entities/user.entity';
 
 // ---------------------------------------------------------------------
 // Reporting (Sally, Oct 2026). All money is GST-inclusive as stored
@@ -639,6 +642,7 @@ export class ReportsService {
       `SELECT oi.id lineId, o.id orderId, o.order_number orderNumber, o.created_at createdAt, o.status,
               o.customer_name_snapshot customerSnapshot, c.first_name firstName, c.last_name lastName, c.company, c.phone,
               oi.product_id productId, oi.sku, oi.name, oi.quantity - COALESCE(rq.q, 0) qty, oi.row_total rowTotal, oi.quantity origQty,
+              oi.po_number poNumber, oi.po_sent_at poSentAt, c.email, o.customer_id customerId,
               p.cost productCost, oi.cost_price lineCost,
               (SELECT sc.supplier FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listSupplier,
               (SELECT sc.cost_inc_gst FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listCost,
@@ -694,6 +698,10 @@ export class ReportsService {
         value: r2(unit * qty),
         unitCostEx,
         costEx: unitCostEx != null ? r2(unitCostEx * qty) : null,
+        // Ordered from the supplier yet? (Sally, 15 Oct 2026)
+        poNumber: x.poNumber || null,
+        poSentAt: x.poSentAt ? new Date(x.poSentAt).toISOString() : null,
+        supplier,
       };
       const key = supplier.toLowerCase();
       const g =
@@ -721,6 +729,108 @@ export class ReportsService {
         oldestDays: rows.length ? Math.max(...list.flatMap((g) => g.lines.map((l: any) => l.daysWaiting))) : 0,
       },
     };
+  }
+
+  // ------------------------------------------------------------ purchase orders
+  // Next free PO number for a supplier: supplier initial + Melbourne date
+  // + a running number for that initial/day, e.g. E151026-1 (Sally, 15
+  // Oct 2026: "the first letter of the supplier ... and then the date ...
+  // they can't duplicate or overlap"). Uniqueness is also enforced by the
+  // unique index when the PO is saved.
+  async nextPoNumber(supplier: string): Promise<string> {
+    const letter = ((supplier || '').match(/[A-Za-z0-9]/)?.[0] || 'P').toUpperCase();
+    const parts = new Intl.DateTimeFormat('en-AU', {
+      timeZone: TZ,
+      day: '2-digit',
+      month: '2-digit',
+      year: '2-digit',
+    }).formatToParts(new Date());
+    const get = (t: string) => parts.find((p) => p.type === t)?.value || '';
+    const prefix = `${letter}${get('day')}${get('month')}${get('year')}-`;
+    const rows: Array<{ po: string }> = await this.dataSource.query(
+      `SELECT po_number po FROM purchase_orders WHERE po_number LIKE ?`,
+      [`${prefix}%`],
+    );
+    const used = rows
+      .map((r) => Number(String(r.po).slice(prefix.length)))
+      .filter((n) => Number.isFinite(n));
+    return `${prefix}${(used.length ? Math.max(...used) : 0) + 1}`;
+  }
+
+  // "Sent PO": record that these backorder lines were ordered from the
+  // supplier on a PO. Each line keeps the PO number; each customer order
+  // gets an internal note (staff only, never printed) and a history entry
+  // so whoever answers the phone can see it's been ordered and on which PO.
+  async markPurchaseOrder(
+    input: { supplier?: string; lineIds?: unknown; poNumber?: string },
+    user: { id: number },
+  ): Promise<{ poNumber: string; lines: number; orders: number }> {
+    const supplier = String(input?.supplier || '').trim().slice(0, 120) || 'Supplier';
+    const lineIds = (Array.isArray(input?.lineIds) ? input.lineIds : [])
+      .map((v) => Number(v))
+      .filter((v) => Number.isInteger(v) && v > 0);
+    if (lineIds.length === 0) throw new BadRequestException('Pick at least one backorder line');
+    const typed = String(input?.poNumber || '').trim().toUpperCase().slice(0, 40);
+    const poNumber = typed || (await this.nextPoNumber(supplier));
+
+    return this.dataSource.transaction(async (m) => {
+      if (await m.findOne(PurchaseOrder, { where: { poNumber } })) {
+        throw new BadRequestException(`PO number ${poNumber} has already been used — use another`);
+      }
+      const lines: Array<{ id: number; orderId: number; sku: string; quantity: number }> = await m.query(
+        `SELECT oi.id, oi.order_id orderId, oi.sku, oi.quantity
+           FROM order_items oi
+          WHERE oi.id IN (?) AND oi.is_backorder = 1 AND oi.backorder_fulfilled_at IS NULL`,
+        [lineIds],
+      );
+      if (lines.length === 0) throw new BadRequestException('None of those lines are open backorders');
+
+      const u = await m.findOne(User, { where: { id: user.id } });
+      const who = u ? [u.firstName, u.lastName].filter(Boolean).join(' ') : `user #${user.id}`;
+      await m.save(
+        m.create(PurchaseOrder, {
+          poNumber,
+          supplier,
+          lineCount: lines.length,
+          createdBy: user.id,
+          createdByName: who,
+        }),
+      );
+      await m.query(
+        `UPDATE order_items SET po_number = ?, po_sent_at = UTC_TIMESTAMP() WHERE id IN (?)`,
+        [poNumber, lines.map((l) => l.id)],
+      );
+
+      const today = new Intl.DateTimeFormat('en-AU', {
+        timeZone: TZ,
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      }).format(new Date());
+      const byOrder = new Map<number, typeof lines>();
+      for (const l of lines) {
+        const list = byOrder.get(Number(l.orderId)) || [];
+        list.push(l);
+        byOrder.set(Number(l.orderId), list);
+      }
+      for (const [orderId, items] of byOrder) {
+        const what = items.map((i) => `${Number(i.quantity)}× ${i.sku}`).join(', ');
+        await m.save(
+          m.create(OrderEvent, {
+            orderId,
+            userId: user.id,
+            type: 'po_sent',
+            description: `Ordered from ${supplier} on PO ${poNumber} by ${who}: ${what}.`,
+          }),
+        );
+        const note = `[${today}] Ordered from ${supplier} — PO ${poNumber} (${what}) by ${who}`;
+        await m.query(
+          `UPDATE orders SET internal_notes = IF(internal_notes IS NULL OR internal_notes = '', ?, CONCAT(internal_notes, '\n', ?)) WHERE id = ?`,
+          [note, note, orderId],
+        );
+      }
+      return { poNumber, lines: lines.length, orders: byOrder.size };
+    });
   }
 
   // ------------------------------------------------------------ original reports

@@ -592,7 +592,12 @@ export class OrdersService {
         : isLayby
           ? 'Layby'
           : 'Backorder';
-      if (totalPayments + 0.01 < minDeposit && !depositOverridden) {
+      // Any user may take NO deposit — the whole balance is owed on
+      // collection (Sally, 15 Oct 2026: regular and trade customers who
+      // won't pay up front). A part payment under the minimum still needs
+      // a manager or admin.
+      const noDeposit = totalPayments <= 0.005;
+      if (!noDeposit && totalPayments + 0.01 < minDeposit && !depositOverridden) {
         throw new BadRequestException(
           `${label} deposit of $${totalPayments.toFixed(2)} is below the minimum: ` +
           `take-now $${takeNowSubtotal.toFixed(2)} (paid in full) + ` +

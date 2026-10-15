@@ -21,6 +21,7 @@ import {
   PrinterIcon,
   NoSymbolIcon,
 } from '@heroicons/react/24/outline';
+import { formatPhone } from '../../utils/phone';
 
 interface Quote {
   id: number;
@@ -1160,7 +1161,7 @@ export default function QuotesPage() {
                       <p className="text-sm text-gray-400">
                         {selectedCustomer.email && <span>{selectedCustomer.email}</span>}
                         {selectedCustomer.email && selectedCustomer.phone && <span> | </span>}
-                        {selectedCustomer.phone && <span>{selectedCustomer.phone}</span>}
+                        {selectedCustomer.phone && <span>{formatPhone(selectedCustomer.phone)}</span>}
                       </p>
                     </div>
                     <button
@@ -1483,7 +1484,7 @@ export default function QuotesPage() {
                         >
                           <p className="font-medium">{c.firstName} {c.lastName}</p>
                           <p className="text-xs text-gray-400">
-                            ID: {c.id} {c.email ? `| ${c.email}` : ''} {c.phone ? `| ${c.phone}` : ''}
+                            ID: {c.id} {c.email ? `| ${c.email}` : ''} {c.phone ? `| ${formatPhone(c.phone)}` : ''}
                           </p>
                         </button>
                       ))}
@@ -2126,7 +2127,7 @@ export default function QuotesPage() {
                         <p className="text-gray-600">{printingQuote.customer.email}</p>
                       )}
                       {printingQuote.customer.phone && (
-                        <p className="text-gray-600">{printingQuote.customer.phone}</p>
+                        <p className="text-gray-600">{formatPhone(printingQuote.customer.phone)}</p>
                       )}
                       {(printingQuote.customer.billingStreet ||
                         printingQuote.customer.billingCity) && (

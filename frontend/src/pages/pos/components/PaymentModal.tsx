@@ -19,6 +19,7 @@ import {
 } from '../../../store/slices/cartSlice';
 import InvoiceModal from './InvoiceModal';
 import AddressAutocomplete from '../../../components/AddressAutocomplete';
+import { formatPhone } from '../../../utils/phone';
 
 interface PaymentModalProps {
   total: number;
@@ -644,7 +645,10 @@ export default function PaymentModal({
     // can override (including dropping the deposit all the way to $0
     // for trusted customers). Server enforces the same rule.
     if (isDepositOrder) {
-      if (depositDue + 0.01 < minDepositForOrder && !canOverrideDeposit) {
+      // $0 is allowed for everyone — the balance is owed on collection
+      // (Sally, 15 Oct 2026). A part payment under the minimum still
+      // needs a manager.
+      if (depositDue > 0.005 && depositDue + 0.01 < minDepositForOrder && !canOverrideDeposit) {
         toast.error(
           `Deposit of $${depositDue.toFixed(2)} is below the minimum $${minDepositForOrder.toFixed(2)} ` +
             `(take-now $${takeNowSubtotal.toFixed(2)} + ${LAYBY_DEPOSIT_PERCENT}% on deferred $${deferredSubtotal.toFixed(2)}). ` +
@@ -1121,7 +1125,7 @@ export default function PaymentModal({
                   .filter(Boolean)
                   .join(' ')}
               </span>{' '}
-              — {phoneMatch.phone}
+              — {formatPhone(phoneMatch.phone)}
               {phoneMatch.isTrade && (
                 <span className="ml-2 text-xs text-orange-400 font-semibold">
                   TRADE
@@ -1879,8 +1883,8 @@ export default function PaymentModal({
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-red-400 font-semibold mb-1">
-                  Deposit (min ${minDepositForOrder.toFixed(2)}
-                  {canOverrideDeposit ? ', manager can drop to $0' : ''})
+                  Deposit (min ${minDepositForOrder.toFixed(2)}, or $0 to pay it all on collection
+                  {canOverrideDeposit ? '; manager can take any amount' : ''})
                 </label>
                 <input
                   type="number"

@@ -117,10 +117,27 @@ export class ReportsController {
   }
 
   // ---- Backorders by supplier
+  // Sales staff can view backorders (read-only) — Sally, 15 Oct 2026.
   @Get('backorders')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
   @ApiOperation({ summary: 'Open backorder lines grouped by supplier' })
   async backorders() {
     return { success: true, data: await this.reportsService.backorders() };
+  }
+
+  @Get('backorders/next-po-number')
+  @ApiOperation({ summary: 'Next free PO number for a supplier' })
+  async nextPoNumber(@Query('supplier') supplier?: string) {
+    return { success: true, data: { poNumber: await this.reportsService.nextPoNumber(supplier || '') } };
+  }
+
+  @Post('backorders/purchase-orders')
+  @ApiOperation({ summary: 'Mark backorder lines as ordered from the supplier on a PO' })
+  async markPurchaseOrder(
+    @Body() body: { supplier?: string; lineIds?: number[]; poNumber?: string },
+    @CurrentUser() user: any,
+  ) {
+    return { success: true, data: await this.reportsService.markPurchaseOrder(body, user) };
   }
 
   // ---- Original reports (kept for the Discounts and Quotes tabs)

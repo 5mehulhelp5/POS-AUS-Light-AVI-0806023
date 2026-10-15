@@ -1,15 +1,15 @@
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store';
-import { reportsApi, ReportRange, ordersApi } from '../../services/api';
-import { buildInvoiceData } from '../../utils/orderInvoice';
-import InvoiceModal from '../pos/components/InvoiceModal';
+import { reportsApi, ReportRange } from '../../services/api';
 import {
   money, int, pct, change, dateTime, dateOnly, periodLabel, presetRange, PRESETS, Preset,
   StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col,
 } from './reportKit';
 import PurchaseOrderEditor from './PurchaseOrder';
+import { formatPhone } from '../../utils/phone';
 
 // Reports suite (Sally, Oct 2026). Every tab reads the same filter bar
 // except End of Day (the till since its last close) and Backorders
@@ -42,7 +42,11 @@ const CHANNELS: Array<{ id: NonNullable<ReportRange['channel']>; label: string }
 const errMsg = (e: any) => e?.response?.data?.message || e?.message || 'Could not load the report';
 
 export default function ReportsPage() {
-  const [tab, setTab] = useState<Tab>('eod');
+  // Sales staff see the Backorders tab only, read-only (Sally, 15 Oct 2026).
+  const me = useSelector((s: RootState) => s.auth.user);
+  const isStaff = me?.role?.name !== 'admin' && me?.role?.name !== 'manager';
+  const visibleTabs = isStaff ? TABS.filter((t) => t.id === 'backorders') : TABS;
+  const [tab, setTab] = useState<Tab>(isStaff ? 'backorders' : 'eod');
   const [preset, setPreset] = useState<Preset>('this_month');
   const [range, setRange] = useState(() => presetRange('this_month'));
   const [channel, setChannel] = useState<NonNullable<ReportRange['channel']>>('store');
@@ -59,10 +63,10 @@ export default function ReportsPage() {
 
   return (
     <div className="h-full p-6 space-y-4 overflow-auto">
-      <h1 className="text-2xl font-bold">Reports</h1>
+      <h1 className="text-2xl font-bold">{isStaff ? 'Backorders' : 'Reports'}</h1>
 
       <div className="flex gap-1 overflow-x-auto pb-1">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -136,7 +140,7 @@ export default function ReportsPage() {
       {tab === 'trade' && <Trade params={params} onCustomer={setHistoryFor} />}
       {tab === 'staff' && <Staff params={params} />}
       {tab === 'customers' && <Customers params={params} onCustomer={setHistoryFor} />}
-      {tab === 'backorders' && <Backorders />}
+      {tab === 'backorders' && <Backorders readOnly={isStaff} />}
       {tab === 'discounts' && <Discounts params={params} />}
       {tab === 'quotes' && <Quotes params={params} />}
 
@@ -588,7 +592,7 @@ const customerColumns = (showTrade: boolean): Col<CustomerRow>[] => [
     ),
   },
   { key: 'company', label: 'Company', value: (r) => r.company || '' },
-  { key: 'phone', label: 'Phone', value: (r) => r.phone || '' },
+  { key: 'phone', label: 'Phone', value: (r) => formatPhone(r.phone) },
   { key: 'orders', label: 'Orders', align: 'right', value: (r) => r.orders, render: (r) => int(r.orders) },
   { key: 'rev', label: 'Spend', align: 'right', value: (r) => r.revenue, render: (r) => money(r.revenue) },
   { key: 'avg', label: 'Average order', align: 'right', value: (r) => r.averageOrder, render: (r) => money(r.averageOrder) },
@@ -739,6 +743,8 @@ type BoLine = {
   customer: string; company: string | null; phone: string | null; sku: string; name: string; qty: number; value: number;
   // Ex GST (Sally, 8 Oct 2026: wholesalers' minimum orders). Null = no cost known.
   unitCostEx: number | null; costEx: number | null;
+  // Ordered from the supplier on this PO (Sally, 15 Oct 2026). Null = not yet.
+  poNumber: string | null; poSentAt: string | null;
 };
 type BoGroup = { supplier: string; lines: BoLine[]; units: number; value: number; costEx: number; linesWithoutCost: number };
 
@@ -751,9 +757,11 @@ const fmtTime = (t: string): string => {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`;
 };
 
-function Backorders() {
+// readOnly: sales staff can see backorders but not raise / mark purchase
+// orders (Sally, 15 Oct 2026).
+function Backorders({ readOnly = false }: { readOnly?: boolean }) {
   const { data, loading, error, reload } = useReport<{ suppliers: BoGroup[]; totals: any }>(() => reportsApi.backorders(), []);
-  const me = useSelector((s: RootState) => s.auth.user);
+  const navigate = useNavigate();
   const [supplier, setSupplier] = useState('all');
   // Ordered date + time filter (Sally, 8 Oct 2026: "Can we filter by
   // Date"; 12 Oct: "also have a filter of 'time' like we have with
@@ -764,33 +772,31 @@ function Backorders() {
   const [toTime, setToTime] = useState('');
   const fromMs = from ? boundary(from, fromTime, false) : null;
   const toMs = to ? boundary(to, toTime, true) : null;
-  const filtered = !!(from || to);
+  // Search (PO number, order, customer, SKU…) and ordered / not ordered
+  // (Sally, 15 Oct 2026: "a search bar ... enter the purchase order number").
+  const [query, setQuery] = useState('');
+  const [poState, setPoState] = useState<'all' | 'open' | 'ordered'>('all');
+  const filtered = !!(from || to || query.trim() || poState !== 'all');
   const [printing, setPrinting] = useState(false);
-  const [poFor, setPoFor] = useState<BoGroup | null>(null);
-  // Order number opens that sale's invoice (Sally, 13 Oct 2026: "click on
-  // the actual order and it takes them to that invoice").
-  const [invoiceData, setInvoiceData] = useState<any>(null);
-  const openInvoice = async (orderId: number) => {
-    try {
-      const [full, refundsRes] = await Promise.all([
-        ordersApi.getOrder(orderId),
-        ordersApi.getRefunds(orderId).catch(() => null),
-      ]);
-      const o = full.data?.data?.order;
-      if (!o) throw new Error('not found');
-      setInvoiceData(buildInvoiceData(o, undefined, refundsRes?.data?.data?.refunds || []));
-    } catch {
-      toast.error('Could not open that invoice');
-    }
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [poFor, setPoFor] = useState<{ supplier: string; lines: BoLine[] } | null>(null);
+
+  const q = query.trim().toLowerCase();
+  const matches = (l: BoLine) => {
+    const t = new Date(l.orderedAt).getTime();
+    if (fromMs != null && t < fromMs) return false;
+    if (toMs != null && t > toMs) return false;
+    if (poState === 'open' && l.poNumber) return false;
+    if (poState === 'ordered' && !l.poNumber) return false;
+    if (!q) return true;
+    return [l.poNumber, l.orderNumber, l.customer, l.company, l.sku, l.name, l.phone]
+      .some((v) => String(v || '').toLowerCase().includes(q));
   };
 
-  // Date/time filter first, then regroup totals so cards / headers / PO match it.
+  // Filters first, then regroup totals so cards / headers / PO match them.
   const dated: BoGroup[] = (data?.suppliers || [])
     .map((g) => {
-      const lines = g.lines.filter((l) => {
-        const t = new Date(l.orderedAt).getTime();
-        return (fromMs == null || t >= fromMs) && (toMs == null || t <= toMs);
-      });
+      const lines = g.lines.filter(matches);
       return {
         ...g,
         lines,
@@ -811,18 +817,55 @@ function Backorders() {
     costEx: groups.reduce((s, g) => s + g.costEx, 0),
     missing: groups.reduce((s, g) => s + g.linesWithoutCost, 0),
     oldestDays: all.length ? Math.max(...all.map((l) => l.daysWaiting)) : 0,
+    notOrdered: all.filter((l) => !l.poNumber).length,
   };
-  const selectedGroup = supplier === 'all' ? null : groups[0] || null;
+
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // Create PO for one supplier: the ticked lines of that supplier, or —
+  // when none are ticked — every line of theirs not ordered yet.
+  const startPo = (g: BoGroup) => {
+    const ticked = g.lines.filter((l) => selected.has(l.lineId));
+    const lines = ticked.length ? ticked : g.lines.filter((l) => !l.poNumber);
+    if (lines.length === 0) {
+      toast('Everything for this supplier is already on a PO — tick lines to order them again');
+      return;
+    }
+    setPoFor({ supplier: g.supplier, lines });
+  };
 
   const lineCols: Col<BoLine>[] = [
+    ...(readOnly
+      ? []
+      : [
+          {
+            key: 'sel', label: '', value: () => '',
+            render: (r: BoLine) => (
+              <input
+                type="checkbox"
+                className="w-4 h-4"
+                checked={selected.has(r.lineId)}
+                onChange={() => toggle(r.lineId)}
+                title="Include in the purchase order"
+              />
+            ),
+          } as Col<BoLine>,
+        ]),
     {
       key: 'o', label: 'Order', value: (r) => r.orderNumber,
+      // Opens the order screen (Sally, 15 Oct 2026: "instead of it popping
+      // up as a PDF ... this screen comes up instead").
       render: (r) => (
         <button
           type="button"
           className="text-primary-400 font-semibold hover:underline whitespace-nowrap"
-          title="Open this invoice"
-          onClick={() => openInvoice(r.orderId)}
+          title="Open this order"
+          onClick={() => navigate('/orders', { state: { openOrderId: r.orderId } })}
         >
           {r.orderNumber}
         </button>
@@ -834,7 +877,7 @@ function Backorders() {
       render: (r) => <span className={r.daysWaiting > 30 ? 'text-red-500 font-semibold' : r.daysWaiting > 14 ? 'text-amber-500' : ''}>{r.daysWaiting} days</span>,
     },
     { key: 'c', label: 'Customer', value: (r) => r.customer + (r.company ? ` (${r.company})` : '') },
-    { key: 'p', label: 'Phone', value: (r) => r.phone || '' },
+    { key: 'p', label: 'Phone', value: (r) => formatPhone(r.phone) },
     { key: 'sku', label: 'SKU', value: (r) => r.sku },
     { key: 'n', label: 'Product', value: (r) => r.name },
     { key: 'q', label: 'Qty', align: 'right', value: (r) => r.qty },
@@ -847,24 +890,69 @@ function Backorders() {
       render: (r) => (r.costEx != null ? money(r.costEx) : <span className="text-gray-500">—</span>),
     },
     { key: 'v', label: 'Sell value', align: 'right', value: (r) => r.value, render: (r) => money(r.value) },
+    {
+      key: 'po', label: 'PO', value: (r) => r.poNumber || '',
+      render: (r) =>
+        r.poNumber ? (
+          <span className="whitespace-nowrap">
+            <span className="font-semibold text-green-500">{r.poNumber}</span>
+            {r.poSentAt && <span className="text-xs text-gray-500"> · {dateOnly(r.poSentAt)}</span>}
+          </span>
+        ) : (
+          <span className="text-xs text-amber-500 whitespace-nowrap">Not ordered</span>
+        ),
+    },
   ];
+  const csvCols = lineCols.filter((c) => c.key !== 'sel');
   const exportAll = () =>
     downloadCsv(
       'backorders-by-supplier.csv',
-      ['Supplier', ...lineCols.map((c) => c.label)],
-      groups.flatMap((g) => g.lines.map((l) => [g.supplier, ...lineCols.map((c) => (c.value ? c.value(l) : ''))])),
+      ['Supplier', ...csvCols.map((c) => c.label)],
+      groups.flatMap((g) => g.lines.map((l) => [g.supplier, ...csvCols.map((c) => (c.value ? c.value(l) : ''))])),
     );
-  const groupTitle = (g: BoGroup) =>
-    `${g.supplier} — ${g.lines.length} lines, ${int(g.units)} units, cost ${money(g.costEx)} ex GST` +
-    (g.linesWithoutCost ? ` (${g.linesWithoutCost} without a cost)` : '') +
-    ` · sell ${money(g.value)}`;
+  const groupTitle = (g: BoGroup) => {
+    const ticked = g.lines.filter((l) => selected.has(l.lineId)).length;
+    const allTicked = ticked === g.lines.length;
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <span>
+          {g.supplier} — {g.lines.length} lines, {int(g.units)} units, cost {money(g.costEx)} ex GST
+          {g.linesWithoutCost ? ` (${g.linesWithoutCost} without a cost)` : ''} · sell {money(g.value)}
+        </span>
+        {!readOnly && (
+          <span className="flex gap-2 ml-auto">
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() =>
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  g.lines.forEach((l) => (allTicked ? next.delete(l.lineId) : next.add(l.lineId)));
+                  return next;
+                })
+              }
+            >
+              {allTicked ? 'Untick all' : 'Tick all'}
+            </button>
+            <button type="button" className="btn-primary btn-sm" onClick={() => startPo(g)}>
+              Create PO{ticked ? ` (${ticked})` : ''}
+            </button>
+          </span>
+        )}
+      </div>
+    );
+  };
   return (
     <State loading={loading} error={error}>
       {data && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
             <StatCard label="Suppliers" value={int(sum.suppliers)} />
-            <StatCard label="Lines on backorder" value={int(sum.lines)} />
+            <StatCard
+              label="Lines on backorder"
+              value={int(sum.lines)}
+              sub={sum.notOrdered ? `${sum.notOrdered} not ordered yet` : 'all on a PO'}
+            />
             <StatCard label="Units" value={int(sum.units)} />
             <StatCard
               label="Cost (ex GST)"
@@ -876,8 +964,25 @@ function Backorders() {
           </div>
           <div className="card p-4 flex flex-wrap items-end gap-3">
             <div>
+              <label className="block text-xs text-gray-400 mb-1">Search</label>
+              <input
+                className="input w-72"
+                value={query}
+                placeholder="PO number, order, customer, SKU…"
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Ordered from supplier?</label>
+              <select className="input w-44" value={poState} onChange={(e) => setPoState(e.target.value as any)}>
+                <option value="all">All lines</option>
+                <option value="open">Not ordered yet</option>
+                <option value="ordered">Ordered (on a PO)</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-xs text-gray-400 mb-1">Supplier</label>
-              <select className="input w-64" value={supplier} onChange={(e) => setSupplier(e.target.value)}>
+              <select className="input w-56" value={supplier} onChange={(e) => setSupplier(e.target.value)}>
                 <option value="all">All suppliers</option>
                 {dated.map((g) => (
                   <option key={g.supplier} value={g.supplier}>{g.supplier} ({g.lines.length})</option>
@@ -941,26 +1046,20 @@ function Backorders() {
                   setTo('');
                   setFromTime('');
                   setToTime('');
+                  setQuery('');
+                  setPoState('all');
                 }}
               >
-                Clear dates
+                Clear filters
               </button>
             )}
-            <button
-              className="btn-primary"
-              onClick={() => selectedGroup && setPoFor(selectedGroup)}
-              disabled={!selectedGroup}
-              title={selectedGroup ? `Purchase order for ${selectedGroup.supplier}` : 'Pick a supplier first'}
-            >
-              Create Purchase Order
-            </button>
             <button className="btn-secondary" onClick={exportAll} disabled={!groups.length}>Export CSV</button>
             <button className="btn-secondary" onClick={() => setPrinting(true)} disabled={!groups.length}>Print</button>
             <button className="btn-secondary" onClick={reload}>Refresh</button>
           </div>
           {groups.length === 0 && (
             <div className="card p-6 text-gray-400">
-              {filtered ? 'Nothing on backorder in that period.' : 'Nothing on backorder.'}
+              {filtered ? 'No backorders match those filters.' : 'Nothing on backorder.'}
             </div>
           )}
           {groups.map((g) => (
@@ -974,15 +1073,20 @@ function Backorders() {
           <Note>
             Open backorder items that haven't been marked received, oldest first. The supplier comes from the supplier price list the SKU is on,
             otherwise the product's brand; custom items with no supplier show under Unknown supplier. Cost is ex GST — the product's
-            current cost, else the cost when it was sold, else the supplier price list. Pick a supplier and use Create Purchase Order to
-            turn its lines into an editable order.
+            current cost, else the cost when it was sold, else the supplier price list.
+            {!readOnly && (
+              <>
+                {' '}To order from a supplier: tick the lines (or tick none to take everything not ordered yet), click Create PO,
+                then download / print it and click Mark as sent — the lines show the PO number and each customer's order gets an
+                internal note.
+              </>
+            )}
           </Note>
-          {invoiceData && <InvoiceModal invoice={invoiceData} onClose={() => setInvoiceData(null)} />}
           {poFor && (
             <PurchaseOrderEditor
               supplier={poFor.supplier}
-              orderedBy={me?.firstName}
               lines={poFor.lines.map((l) => ({
+                lineId: l.lineId,
                 sku: l.sku,
                 name: l.name,
                 qty: l.qty,
@@ -992,13 +1096,18 @@ function Backorders() {
                 orderNumber: l.orderNumber,
               }))}
               onClose={() => setPoFor(null)}
+              onMarkedSent={() => {
+                setSelected(new Set());
+                setPoFor(null);
+                reload();
+              }}
             />
           )}
           {printing && (
             <PrintSheet title="Backorders by supplier" onClose={() => setPrinting(false)}>
               <p className="mb-4 text-gray-600">
                 Australian Lighting & Fans · printed {dateTime(new Date().toISOString())}
-                {filtered && (
+                {(from || to) && (
                   <>
                     {' '}· ordered {from ? `${dateOnly(from)}${fromTime ? ` ${fmtTime(fromTime)}` : ''}` : 'any time'} to{' '}
                     {to ? `${dateOnly(to)}${toTime ? ` ${fmtTime(toTime)}` : ''}` : 'now'}
@@ -1013,14 +1122,15 @@ function Backorders() {
                   <table className="w-full text-xs">
                     <thead><tr className="text-left">
                       <th className="py-1">Order</th><th>Ordered</th><th>Customer</th><th>Phone</th><th>SKU</th><th>Product</th>
-                      <th className="text-right">Qty</th><th className="text-right">Cost ex GST</th>
+                      <th className="text-right">Qty</th><th className="text-right">Cost ex GST</th><th>PO</th>
                     </tr></thead>
                     <tbody>
                       {g.lines.map((l) => (
                         <tr key={l.lineId} className="border-t border-gray-200">
                           <td className="py-1">{l.orderNumber}</td><td>{dateTime(l.orderedAt)}</td><td>{l.customer}</td>
-                          <td>{l.phone || ''}</td><td>{l.sku}</td><td>{l.name}</td><td className="text-right">{l.qty}</td>
+                          <td>{formatPhone(l.phone)}</td><td>{l.sku}</td><td>{l.name}</td><td className="text-right">{l.qty}</td>
                           <td className="text-right">{l.costEx != null ? money(l.costEx) : '—'}</td>
+                          <td>{l.poNumber || '—'}</td>
                         </tr>
                       ))}
                     </tbody>
