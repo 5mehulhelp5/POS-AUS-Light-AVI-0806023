@@ -980,12 +980,24 @@ export default function PaymentModal({
       );
       // Tag each invoice line so the invoice template can group them
       // into "Taking home today" vs "On Lay By" vs "On Backorder".
+      // Part quantities ride along (Sally, 15 Oct 2026: 4 sold, 2 on
+      // backorder + 2 taken printed as "B/ORDER 4") — same split as the
+      // take-now / deferred totals above.
       const invoiceItems = cart.items.map((item) => {
         const isBack = !!backorderByProductId[item.productId];
         const isHeld =
           !!laybyHeldByProductId[item.productId] ||
           (LAYBY_ALL_FROM_TOGGLE && !isBack);
-        return { ...item, isBackorder: isBack, isLaybyHeld: isHeld };
+        const backorderQty = isBack
+          ? Math.min(item.quantity, Math.max(0, backorderQtyByProductId[item.productId] ?? item.quantity))
+          : 0;
+        const laybyHeldQty = isHeld
+          ? Math.min(
+              item.quantity - backorderQty,
+              Math.max(0, laybyHeldQtyByProductId[item.productId] ?? item.quantity),
+            )
+          : 0;
+        return { ...item, isBackorder: isBack, isLaybyHeld: isHeld, backorderQty, laybyHeldQty };
       });
       const invoice = {
         orderNumber,

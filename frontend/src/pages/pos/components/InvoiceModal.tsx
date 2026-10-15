@@ -49,6 +49,11 @@ interface InvoiceData {
     // Units of this line refunded so far — set on re-prints via
     // buildInvoiceData(order, ..., refunds).
     refundedQty?: number;
+    // Part of the line on backorder / lay-by (the rest is taken today).
+    // Missing = the whole line, which is how re-printed orders arrive
+    // (the server stores a split line as separate items).
+    backorderQty?: number;
+    laybyHeldQty?: number;
   })[];
   subtotal: number;
   itemDiscounts: number;
@@ -256,7 +261,14 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
 
   // Aggregate qty splits across the order so we can render per-line
   // TAKEN / B-ORDER / LAY-BY columns matching the printed template.
-  const rows = invoice.items.map((it) => ({
+  const rows = invoice.items.map((it) => {
+    const backQty = it.isBackorder
+      ? Math.min(it.quantity, Math.max(0, it.backorderQty ?? it.quantity))
+      : 0;
+    const heldQty = it.isLaybyHeld
+      ? Math.min(it.quantity - backQty, Math.max(0, it.laybyHeldQty ?? it.quantity))
+      : 0;
+    return {
     qty: it.quantity,
     name: it.name,
     sku: it.sku,
@@ -268,14 +280,15 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
     unitPrice: it.quantity > 0 ? it.rowTotal / it.quantity : it.unitPrice,
     listPrice: it.unitPrice,
     rowTotal: it.rowTotal,
-    takenQty: it.isBackorder || it.isLaybyHeld ? 0 : it.quantity,
-    backorderQty: it.isBackorder ? it.quantity : 0,
-    laybyQty: it.isLaybyHeld ? it.quantity : 0,
+    takenQty: it.quantity - backQty - heldQty,
+    backorderQty: backQty,
+    laybyQty: heldQty,
     // Flag clearance/sale lines so the printed invoice shows why the
     // price differs from the ticketed RRP.
     isSale: !!it.isSaleItem,
     refundedQty: it.refundedQty || 0,
-  }));
+    };
+  });
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
