@@ -500,6 +500,30 @@ export class OrdersController {
     return { success: true, data: { order } };
   }
 
+  // Website orders: put a line (or part of it) on back order, or mark that
+  // back order complete (Sally, 16 Oct 2026).
+  @Patch(':id/items/:itemId/website-status')
+  @ApiOperation({ summary: 'Back Order / Complete on a website order line (no stock or money change)' })
+  async setWebsiteLineStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() body: { status?: string; qty?: number },
+    @CurrentUser() user: any,
+  ) {
+    const status = String(body?.status || '').toLowerCase();
+    if (status !== 'backorder' && status !== 'complete') {
+      throw new BadRequestException('status must be backorder or complete');
+    }
+    const order = await this.ordersService.setWebsiteLineStatus(
+      id,
+      itemId,
+      status,
+      body?.qty != null ? Number(body.qty) : undefined,
+      user.id,
+    );
+    return { success: true, data: { order } };
+  }
+
   @Post(':id/backorder/fulfill')
   @UseGuards(RolesGuard)
   @Roles(RoleNames.ADMIN, RoleNames.MANAGER)

@@ -431,6 +431,44 @@ export default function OrdersPage() {
       setItemStatusSaving(null);
     }
   };
+  // Website orders: Back Order (with how many) / Complete per line, so
+  // purchasing can order website lines on the same PO as POS ones (Sally,
+  // 16 Oct 2026). Shown while Magento has the order open, or while a line
+  // is still on back order.
+  const [webQty, setWebQty] = useState<Record<number, string>>({});
+  const webLineEditable = (o: any, item: any) =>
+    isWebOrder(o) &&
+    !['cancelled', 'refunded'].includes(o.status) &&
+    (['pending', 'processing'].includes(o.status) || (item.isBackorder && !item.backorderFulfilledAt));
+  const handleWebLine = async (order: any, item: any, status: 'backorder' | 'complete') => {
+    const qty = Math.floor(Number(webQty[item.id] ?? item.backorderQty ?? item.quantity));
+    if (status === 'backorder' && (!Number.isFinite(qty) || qty < 1 || qty > item.quantity)) {
+      toast.error(`Enter how many to order: 1 to ${item.quantity}`);
+      return;
+    }
+    setItemStatusSaving(item.id);
+    try {
+      await ordersApi.setWebsiteLineStatus(order.id, item.id, status, status === 'backorder' ? qty : undefined);
+      const fresh = await ordersApi.getOrder(order.id);
+      setSelectedOrder({ ...fresh.data.data.order, refunds: order.refunds || [] });
+      setWebQty((m) => {
+        const next = { ...m };
+        delete next[item.id];
+        return next;
+      });
+      toast.success(
+        status === 'backorder'
+          ? `${qty} × ${item.sku} on back order — it's on Reports > Backorders`
+          : `${item.sku} back order complete`,
+      );
+      fetchOrders();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Could not update the line');
+    } finally {
+      setItemStatusSaving(null);
+    }
+  };
+
   // Refunded quantity per line, from the refunds already loaded on the
   // selected order, so a line can show Lay-by AND Refunded together.
   const refundedQtyFor = (order: any, itemId: number): number =>
@@ -1263,7 +1301,8 @@ export default function OrdersPage() {
               {isWebOrder(selectedOrder) && (
                 <div className="rounded-lg p-3 text-sm border border-blue-500/40 bg-blue-500/10 text-blue-300">
                   Website order {selectedOrder.magentoIncrementId ? `#${selectedOrder.magentoIncrementId} ` : ''}
-                  — view only. Payments, refunds and changes are made in Magento.
+                  — view only. Payments, refunds and changes are made in Magento. Lines can be put on
+                  Back Order for purchasing.
                 </div>
               )}
 
@@ -1319,7 +1358,8 @@ export default function OrdersPage() {
                       )}
                       {!c && isWebOrder(selectedOrder) && (
                         <div className="text-gray-400 md:col-span-2 whitespace-pre-wrap">
-                          {selectedOrder.internalNotes || 'Website guest checkout.'}
+                          {(selectedOrder.internalNotes || '').split('
+')[0] || 'Website guest checkout.'}
                         </div>
                       )}
                       {!c && !isWebOrder(selectedOrder) && (
@@ -1370,7 +1410,7 @@ export default function OrdersPage() {
                             className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-cyan-600/30 text-cyan-300 whitespace-nowrap"
                             title="Ordering from supplier"
                           >
-                            Back Order
+                            Back Order{item.backorderQty ? ` ${item.backorderQty} of ${item.quantity}` : ''}
                           </span>
                         )}
                         {item.isBackorder && item.backorderFulfilledAt && (
@@ -1423,6 +1463,43 @@ export default function OrdersPage() {
                               <option value="layby">Lay-by</option>
                               <option value="paid">Paid</option>
                             </select>
+                          )}
+                          {webLineEditable(selectedOrder, item) && (
+                            <span className="inline-flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={1}
+                                max={item.quantity}
+                                className="input py-0.5 px-2 text-xs w-14"
+                                title="How many to order"
+                                value={webQty[item.id] ?? String(item.backorderQty ?? item.quantity)}
+                                disabled={itemStatusSaving === item.id}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setWebQty((m) => ({ ...m, [item.id]: v }));
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                disabled={itemStatusSaving === item.id}
+                                title="Put this many on back order — it goes on Reports > Backorders"
+                                onClick={() => handleWebLine(selectedOrder, item, 'backorder')}
+                              >
+                                Back Order
+                              </button>
+                              {openBackorder && (
+                                <button
+                                  type="button"
+                                  className="btn-primary btn-sm bg-green-600 hover:bg-green-700"
+                                  disabled={itemStatusSaving === item.id}
+                                  title="Stock is in — take it off the back orders"
+                                  onClick={() => handleWebLine(selectedOrder, item, 'complete')}
+                                >
+                                  Complete
+                                </button>
+                              )}
+                            </span>
                           )}
                           <span className="font-medium">${parseFloat(item.rowTotal).toFixed(2)}</span>
                           {canManage && openBackorder && !isWebOrder(selectedOrder) && (

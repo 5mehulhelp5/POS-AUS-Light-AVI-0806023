@@ -760,6 +760,7 @@ type BoLine = {
   unitCostEx: number | null; costEx: number | null;
   // Ordered from the supplier on this PO (Sally, 15 Oct 2026). Null = not yet.
   poNumber: string | null; poSentAt: string | null;
+  source?: 'pos' | 'magento' | 'legacy';
 };
 type BoGroup = { supplier: string; lines: BoLine[]; units: number; value: number; costEx: number; linesWithoutCost: number };
 
@@ -916,6 +917,11 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
           }
         >
           {r.orderNumber}
+          {r.source === 'magento' && (
+            <span className="ml-1 px-1 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-600/20 text-blue-400 align-middle">
+              Web
+            </span>
+          )}
         </button>
       ),
     },

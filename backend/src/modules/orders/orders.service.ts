@@ -1170,6 +1170,63 @@ export class OrdersService {
     }
   }
 
+  // Website orders stay view-only, except that purchasing can put a line
+  // (or some of it) on back order and later mark it complete, so it shows
+  // on Reports > Backorders next to POS lines and goes on the same PO
+  // (Sally, 16 Oct 2026). Nothing here touches stock, money or the
+  // order's status — Magento owns those.
+  async setWebsiteLineStatus(
+    orderId: number,
+    itemId: number,
+    status: 'backorder' | 'complete',
+    qty: number | undefined,
+    userId: number,
+  ): Promise<Order> {
+    const order = await this.orderRepository.findOne({ where: { id: orderId } });
+    if (!order) throw new BadRequestException('Order not found');
+    if (order.source !== OrderSource.MAGENTO) {
+      throw new BadRequestException('Only for website orders — use the line status on POS orders');
+    }
+    if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.REFUNDED) {
+      throw new BadRequestException(`This website order is ${order.status} — nothing to back order`);
+    }
+    const item = await this.orderItemRepository.findOne({ where: { id: itemId, orderId } });
+    if (!item) throw new BadRequestException('Item not found on this order');
+
+    const editor = await this.dataSource
+      .getRepository(User)
+      .findOne({ where: { id: userId }, select: { id: true, firstName: true, lastName: true } });
+    const who = editor ? [editor.firstName, editor.lastName].filter(Boolean).join(' ') : `user #${userId}`;
+    let description: string;
+
+    if (status === 'backorder') {
+      const n = Math.floor(Number(qty ?? item.quantity));
+      if (!Number.isFinite(n) || n < 1 || n > item.quantity) {
+        throw new BadRequestException(`Back order quantity must be 1 to ${item.quantity}`);
+      }
+      item.isBackorder = true;
+      item.backorderQty = n < item.quantity ? n : null;
+      item.backorderFulfilledAt = null;
+      description = `${n} of ${item.quantity} × ${item.sku} put on back order by ${who}.`;
+    } else {
+      if (!item.isBackorder || item.backorderFulfilledAt) {
+        throw new BadRequestException('This line isn\'t on back order');
+      }
+      item.backorderFulfilledAt = new Date();
+      description = `${item.sku} back order marked complete by ${who}.`;
+    }
+    await this.orderItemRepository.save(item);
+    await this.orderEventRepository.save(
+      this.orderEventRepository.create({
+        orderId,
+        userId,
+        type: status === 'backorder' ? 'website_backorder' : 'website_backorder_complete',
+        description,
+      }),
+    );
+    return (await this.findById(orderId)) as Order;
+  }
+
   async linkCustomer(orderId: number, customerId: number, userId?: number): Promise<Order> {
     const order = await this.orderRepository.findOne({ where: { id: orderId } });
     if (!order) {

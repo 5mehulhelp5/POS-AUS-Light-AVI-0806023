@@ -1574,9 +1574,10 @@ export class SyncService {
     const pickup = /pick\s*-?\s*up|collect/i.test(magentoOrder.shipping_description || '');
 
     // Find existing POS order by magentoOrderId
+    // Lines aren't loaded: saving the order would cascade them back over
+    // anything changed in the POS since (website back orders).
     let order = await this.orderRepository.findOne({
       where: { magentoOrderId: String(magentoOrder.entity_id) },
-      relations: ['items'],
     });
 
     const isNew = !order;

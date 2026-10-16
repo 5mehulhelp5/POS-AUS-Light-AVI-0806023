@@ -40,6 +40,8 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     taxAmount: parseFloat(it.taxAmount || 0),
     rowTotal: parseFloat(it.rowTotal ?? it.unitPrice * it.quantity),
     isBackorder: !!it.isBackorder,
+    // Only some of the line on back order (website orders).
+    backorderQty: it.backorderQty ?? undefined,
     isLaybyHeld: !!it.isLaybyHeld,
     refundedQty: refundedQtyByItem[it.id] || 0,
   }));

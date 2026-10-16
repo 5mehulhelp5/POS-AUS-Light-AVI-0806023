@@ -641,7 +641,9 @@ export class ReportsService {
     const rows = await this.dataSource.query(
       `SELECT oi.id lineId, o.id orderId, o.order_number orderNumber, o.created_at createdAt, o.status,
               o.customer_name_snapshot customerSnapshot, c.first_name firstName, c.last_name lastName, c.company, c.phone,
-              oi.product_id productId, oi.sku, oi.name, oi.quantity - COALESCE(rq.q, 0) qty, oi.row_total rowTotal, oi.quantity origQty,
+              oi.product_id productId, oi.sku, oi.name,
+              LEAST(COALESCE(oi.backorder_qty, oi.quantity), oi.quantity - COALESCE(rq.q, 0)) qty,
+              oi.row_total rowTotal, oi.quantity origQty, o.source, o.internal_notes internalNotes,
               oi.po_number poNumber, oi.po_sent_at poSentAt, c.email, o.customer_id customerId,
               p.cost productCost, oi.cost_price lineCost,
               (SELECT sc.supplier FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listSupplier,
@@ -694,9 +696,14 @@ export class ReportsService {
         orderedAt: new Date(x.createdAt).toISOString(),
         daysWaiting: Math.floor((now - new Date(x.createdAt).getTime()) / 86400000),
         status: x.status,
+        // Website orders sit here too once purchasing back-orders a line
+        // (Sally, 16 Oct 2026). Their buyer's phone is in the import note.
+        source: x.source,
         customer: [x.firstName, x.lastName].filter(Boolean).join(' ') || x.customerSnapshot || 'Walk-in',
         company: x.company,
-        phone: x.phone,
+        phone:
+          x.phone ||
+          (x.source === 'magento' ? /Phone: ([^·]+)/.exec(x.internalNotes || '')?.[1]?.trim() || null : null),
         sku: x.sku,
         name: x.name,
         qty,

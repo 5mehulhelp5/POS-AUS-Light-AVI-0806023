@@ -81,6 +81,12 @@ export class OrderItem {
   @Column({ name: 'backorder_fulfilled_at', type: 'timestamp', nullable: true })
   backorderFulfilledAt: Date | null;
 
+  // How many of this line are on back order when it's only some of them
+  // (website orders, Sally 16 Oct 2026: "if this was three and we only
+  // need to order two"). Null = the whole line.
+  @Column({ name: 'backorder_qty', type: 'int', unsigned: true, nullable: true })
+  backorderQty: number | null;
+
   // The purchase order this backorder line was ordered from the supplier
   // on (Reports > Backorders, "Mark as sent", Sally 15 Oct 2026). Null =
   // not ordered yet.
