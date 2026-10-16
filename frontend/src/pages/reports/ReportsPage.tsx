@@ -32,11 +32,13 @@ const TABS: Array<{ id: Tab; label: string; filters: boolean; groupBy?: boolean 
   { id: 'quotes', label: 'Quotes', filters: true },
 ];
 
+// Website orders count in the reports by default (Sally, 16 Oct 2026:
+// "all magento orders can feed into all the other reports").
 const CHANNELS: Array<{ id: NonNullable<ReportRange['channel']>; label: string }> = [
+  { id: 'all', label: 'Everything (in-store + website)' },
   { id: 'store', label: 'In-store (POS + old invoices)' },
   { id: 'pos', label: 'POS only' },
   { id: 'web', label: 'Website orders' },
-  { id: 'all', label: 'All channels' },
 ];
 
 const errMsg = (e: any) => e?.response?.data?.message || e?.message || 'Could not load the report';
@@ -58,7 +60,7 @@ export default function ReportsPage() {
   );
   const [preset, setPreset] = useState<Preset>('this_month');
   const [range, setRange] = useState(() => presetRange('this_month'));
-  const [channel, setChannel] = useState<NonNullable<ReportRange['channel']>>('store');
+  const [channel, setChannel] = useState<NonNullable<ReportRange['channel']>>('all');
   const [groupBy, setGroupBy] = useState<'auto' | 'day' | 'week' | 'month' | 'year'>('auto');
   const [historyFor, setHistoryFor] = useState<number | null>(null);
 

@@ -554,20 +554,25 @@ export class MagentoService {
   }
 
   // Orders created or changed at/after `since` (Magento's UTC
-  // "YYYY-MM-DD HH:mm:ss"), oldest change first. Used by the 15-minute
-  // website order import so it never re-reads the whole order history.
-  async fetchOrdersUpdatedSince(since: string): Promise<MagentoOrder[]> {
-    const token = await this.getAdminToken();
+  // "YYYY-MM-DD HH:mm:ss"), handed over one page at a time so a re-read of
+  // the whole history (26k orders) never sits in memory at once. Sorted
+  // by order id, which an edit during the run can't reshuffle, so no
+  // order is skipped between pages.
+  async forEachOrderPageUpdatedSince(
+    since: string,
+    onPage: (orders: MagentoOrder[], total: number) => Promise<void>,
+  ): Promise<number> {
     const pageSize = 100;
-    const out: MagentoOrder[] = [];
     let page = 1;
+    let seen = 0;
     let total = 0;
     do {
+      const token = await this.getAdminToken();
       const params = new URLSearchParams({
         'searchCriteria[filter_groups][0][filters][0][field]': 'updated_at',
         'searchCriteria[filter_groups][0][filters][0][value]': since,
         'searchCriteria[filter_groups][0][filters][0][condition_type]': 'gteq',
-        'searchCriteria[sortOrders][0][field]': 'updated_at',
+        'searchCriteria[sortOrders][0][field]': 'entity_id',
         'searchCriteria[sortOrders][0][direction]': 'ASC',
         'searchCriteria[pageSize]': String(pageSize),
         'searchCriteria[currentPage]': String(page),
@@ -577,15 +582,17 @@ export class MagentoService {
         timeout: 60000,
       });
       const data = response.data as MagentoOrdersResponse;
-      out.push(...(data.items || []));
+      const items = data.items || [];
       total = data.total_count || 0;
+      seen += items.length;
+      if (items.length) await onPage(items, total);
       // Magento returns the last page again for a page past the end —
       // stop on a short page as well as on the count.
-      if (!data.items || data.items.length < pageSize) break;
+      if (items.length < pageSize) break;
       page++;
       await new Promise((r) => setTimeout(r, 200));
-    } while (out.length < total);
-    return out;
+    } while (seen < total);
+    return seen;
   }
 
   async fetchAllOrders(): Promise<MagentoOrder[]> {

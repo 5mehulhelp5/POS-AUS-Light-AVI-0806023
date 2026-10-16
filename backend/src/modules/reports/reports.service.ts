@@ -18,7 +18,9 @@ import { User } from '../users/entities/user.entity';
 // ---------------------------------------------------------------------
 
 const TZ = 'Australia/Melbourne';
-const COUNTED = `o.status NOT IN ('cancelled','layby_expired','pending')`;
+// A website order refunded in Magento has no POS refund to net it off, so
+// it isn't counted as a sale at all.
+const COUNTED = `o.status NOT IN ('cancelled','layby_expired','pending') AND NOT (o.source = 'magento' AND o.status = 'refunded')`;
 
 export type Channel = 'store' | 'pos' | 'web' | 'all';
 export type GroupBy = 'day' | 'week' | 'month' | 'year';
@@ -601,12 +603,16 @@ export class ReportsService {
     const { from, to } = this.checkRange(q);
     const ch = this.channelSql(q.channel);
     const rows = await this.dataSource.query(
-      `SELECT u.id, u.first_name firstName, u.last_name lastName,
+      // Website orders are their own row, not credited to the login the
+      // import runs under.
+      `SELECT IF(o.source = 'magento', 0, u.id) id,
+              IF(o.source = 'magento', 'Website', u.first_name) firstName,
+              IF(o.source = 'magento', 'orders', u.last_name) lastName,
               COUNT(o.id) transactions, SUM(o.grand_total) revenue, SUM(o.discount_amount) discounts,
               SUM(o.is_trade) tradeTransactions
          FROM orders o JOIN users u ON u.id = o.user_id
         WHERE ${COUNTED} AND ${ch} AND ${this.inRange('o.created_at')}
-        GROUP BY u.id, u.first_name, u.last_name ORDER BY revenue DESC`,
+        GROUP BY 1, 2, 3 ORDER BY revenue DESC`,
       this.rangeParams(from, to),
     );
     const refunds = await this.dataSource.query(

@@ -312,31 +312,32 @@ export class SyncService {
         since = magentoUtc(new Date(newest.getTime() - 2 * 86_400_000));
       }
 
-      const orders = await this.magentoService.fetchOrdersUpdatedSince(since);
-      this.orderSyncProgress.fetched = orders.length;
-      this.orderSyncProgress.message = `Saving ${orders.length} website orders...`;
-
       let created = 0;
       let updated = 0;
       const errors: string[] = [];
-      let firstFailedAt: string | null = null;
-      for (const mo of orders) {
-        try {
-          const r = await this.syncSingleOrder(mo);
-          if (r === 'created') created++;
-          else updated++;
-          this.orderSyncProgress.created = created;
-          this.orderSyncProgress.updated = updated;
-        } catch (error) {
-          const msg = `Failed to import website order ${mo.increment_id}: ${error}`;
-          this.logger.error(msg);
-          errors.push(msg);
-          this.orderSyncProgress.errors++;
-          this.orderSyncProgress.lastError = msg;
-          if (!firstFailedAt && mo.updated_at) firstFailedAt = mo.updated_at;
+      // Set inside the page callback, so typed loosely enough for TS.
+      let firstFailedAt = null as string | null;
+      const seen = await this.magentoService.forEachOrderPageUpdatedSince(since, async (page, total) => {
+        this.orderSyncProgress.fetched = total;
+        this.orderSyncProgress.message = `Saving website orders (${total} to read)...`;
+        for (const mo of page) {
+          try {
+            const r = await this.syncSingleOrder(mo);
+            if (r === 'created') created++;
+            else updated++;
+            this.orderSyncProgress.created = created;
+            this.orderSyncProgress.updated = updated;
+          } catch (error) {
+            const msg = `Failed to import website order ${mo.increment_id}: ${error}`;
+            this.logger.error(msg);
+            if (errors.length < 200) errors.push(msg);
+            this.orderSyncProgress.errors++;
+            this.orderSyncProgress.lastError = msg;
+            if (mo.updated_at && (!firstFailedAt || mo.updated_at < firstFailedAt)) firstFailedAt = mo.updated_at;
+          }
+          this.orderSyncProgress.processed++;
         }
-        this.orderSyncProgress.processed++;
-      }
+      });
 
       // Next run reads from 10 minutes before this one started (an order
       // saved in Magento while we were reading isn't missed), or from the
@@ -345,7 +346,7 @@ export class SyncService {
       if (firstFailedAt && firstFailedAt < next) next = firstFailedAt;
       await this.saveWebsiteOrderImport({ ...(await this.getWebsiteOrderImport()), syncedUntil: next });
 
-      if (orders.length > 0 || errors.length > 0) {
+      if (seen > 0 || errors.length > 0) {
         await this.logSync('orders', created + updated, errors.length === 0, { created, updated, errors });
         this.logger.log(
           `Website order import: ${created} new, ${updated} updated, ${errors.length} errors (since ${since} UTC)`,
@@ -1544,9 +1545,10 @@ export class SyncService {
     }
     const email = (magentoOrder.customer_email || magentoOrder.billing_address?.email || '').trim();
     if (!customerId && email) {
+      // Case-insensitive by the column's collation, and uses its index.
       const byEmail = await this.customerRepository
         .createQueryBuilder('c')
-        .where('LOWER(c.email) = :e', { e: email.toLowerCase() })
+        .where('c.email = :e', { e: email })
         .orderBy('c.id', 'ASC')
         .getOne();
       customerId = byEmail?.id || null;
@@ -1664,6 +1666,8 @@ export class SyncService {
           discountAmount: Math.abs(Number(mItem.discount_amount || 0)),
           taxAmount: Number(mItem.tax_amount || 0),
           rowTotal: Number(mItem.row_total_incl_tax || mItem.row_total || 0),
+          // Cost when the order came in, for margins in the reports.
+          costPrice: localProduct?.cost != null && Number(localProduct.cost) > 0 ? Number(localProduct.cost) : null,
         } as Partial<OrderItem>);
         await this.orderItemRepository.save(orderItem);
       }
