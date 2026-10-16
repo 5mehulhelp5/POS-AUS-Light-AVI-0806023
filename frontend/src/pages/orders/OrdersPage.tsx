@@ -1599,6 +1599,12 @@ export default function OrdersPage() {
                     <span>-${parseFloat(selectedOrder.discountAmount).toFixed(2)}</span>
                   </div>
                 )}
+                {parseFloat(selectedOrder.deliveryFee || 0) > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span>Delivery</span>
+                    <span>${parseFloat(selectedOrder.deliveryFee).toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span>Tax</span>
                   <span>${parseFloat(selectedOrder.taxAmount).toFixed(2)}</span>

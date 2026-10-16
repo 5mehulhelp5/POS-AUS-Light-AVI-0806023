@@ -298,12 +298,16 @@ export default function OrderHistoryTimeline({
               <span className="text-gray-400">{formatDate(order.createdAt)}</span>
             </div>
             <div className="text-xs text-gray-500 mt-1">
-              {order.user
-                ? `By ${order.user.firstName} ${order.user.lastName || ''}`
-                : ''}
+              {order.source === 'magento'
+                ? 'On the website'
+                : order.user
+                  ? `By ${order.user.firstName} ${order.user.lastName || ''}`
+                  : ''}
               {order.customer
                 ? ` · ${order.customer.firstName} ${order.customer.lastName || ''}`
-                : ' · Walk-in'}
+                : order.customerNameSnapshot
+                  ? ` · ${order.customerNameSnapshot}`
+                  : ' · Walk-in'}
             </div>
           </div>
         </div>
