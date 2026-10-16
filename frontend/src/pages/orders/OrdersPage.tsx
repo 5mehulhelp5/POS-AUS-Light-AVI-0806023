@@ -19,8 +19,11 @@ import {
   BanknotesIcon,
   CheckCircleIcon,
   ArrowDownTrayIcon,
+  TagIcon,
+  UserPlusIcon,
 } from '@heroicons/react/24/outline';
 import { formatPhone } from '../../utils/phone';
+import { customerTicketHtml, printTicketHtml, CustomerTicket } from '../../utils/ticket';
 
 interface Order {
   id: number;
@@ -206,8 +209,13 @@ export default function OrdersPage() {
   // Refund modal state
   const [refundOrder, setRefundOrder] = useState<any>(null);
 
-  // Link-customer flow (for walk-in orders that need a customer before refund)
+  // Link-customer flow — walk-in orders that need a customer before a
+  // refund, or from the order screen's Customer card (Sally, 16 Oct 2026:
+  // the customer's details belong on the order and its ticket).
   const [linkOrder, setLinkOrder] = useState<Order | null>(null);
+  const [linkThen, setLinkThen] = useState<'refund' | 'order' | 'ticket'>('refund');
+  // Customer ticket preview (89 x 36 mm label for the stock's box).
+  const [ticketFor, setTicketFor] = useState<any>(null);
   const [linkSearch, setLinkSearch] = useState('');
   const [linkResults, setLinkResults] = useState<any[]>([]);
   const [linkLoading, setLinkLoading] = useState(false);
@@ -286,14 +294,25 @@ export default function OrdersPage() {
   // order number, Sally 15 Oct 2026) — open it, then clear the state so a
   // refresh doesn't reopen it.
   const location = useLocation();
+  // Back / Cancel on an order opened from another screen returns there
+  // (Sally, 16 Oct 2026: from Backorders, Back should go to Backorders).
+  const [returnTo, setReturnTo] = useState<{ path: string; tab?: string; orderId: number } | null>(null);
   useEffect(() => {
-    const id = Number((location.state as any)?.openOrderId);
+    const st = location.state as any;
+    const id = Number(st?.openOrderId);
     if (id > 0) {
+      setReturnTo(st?.returnTo?.path ? { path: st.returnTo.path, tab: st.returnTo.tab, orderId: id } : null);
       viewOrder(id);
       navigate(location.pathname, { replace: true, state: null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+  const closeOrder = () => {
+    const back = returnTo && selectedOrder && returnTo.orderId === selectedOrder.id ? returnTo : null;
+    setSelectedOrder(null);
+    setReturnTo(null);
+    if (back) navigate(back.path, { state: back.tab ? { tab: back.tab } : undefined });
+  };
 
   const viewOrder = async (id: number) => {
     try {
@@ -566,10 +585,16 @@ export default function OrdersPage() {
 
   // Money already taken against an order (deposit + instalments) and
   // what's still owed. Payments come back on the order detail payload.
+  // Website orders were paid in Magento — no POS payment rows.
+  const isWebOrder = (o: any) => o?.source === 'magento';
   const paidTotal = (o: any) =>
-    (o?.payments || [])
-      .filter((p: any) => !p.status || p.status === 'completed')
-      .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+    isWebOrder(o) && !(o?.payments || []).length
+      ? ['paid', 'refunded'].includes(o.paymentStatus)
+        ? parseFloat(o.grandTotal)
+        : 0
+      : (o?.payments || [])
+          .filter((p: any) => !p.status || p.status === 'completed')
+          .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
   const balanceDue = (o: any) =>
     Math.max(
       0,
@@ -579,9 +604,24 @@ export default function OrdersPage() {
   // backorders that took a deposit (Sally, 9 Sep: POS ORDER 0067 needs a
   // PAY button so the customer can complete payment).
   const canTakePayment = (o: any) =>
-    ['layby_active', 'layby_expired'].includes(o.status) ||
-    (['backorder_pending', 'pending', 'processing'].includes(o.status) &&
-      o.paymentStatus !== 'paid');
+    !isWebOrder(o) &&
+    (['layby_active', 'layby_expired'].includes(o.status) ||
+      (['backorder_pending', 'pending', 'processing'].includes(o.status) &&
+        o.paymentStatus !== 'paid'));
+
+  // Customer ticket for the box (Sally, 16 Oct 2026). Website orders keep
+  // the buyer's phone in the import note.
+  const ticketData = (o: any): CustomerTicket => {
+    const c = o.customer;
+    const webPhone = isWebOrder(o) ? /Phone: ([^·]+)/.exec(o.internalNotes || '')?.[1]?.trim() : '';
+    return {
+      orderNumber: o.orderNumber,
+      name: c ? [c.firstName, c.lastName].filter(Boolean).join(' ') : o.customerNameSnapshot || '',
+      company: c?.company || null,
+      phone: formatPhone(c ? c.phone || c.mobile : webPhone) || null,
+      printedOn: new Date().toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    };
+  };
 
   // Debounced customer search for the Link Customer flow
   useEffect(() => {
@@ -610,6 +650,17 @@ export default function OrdersPage() {
     try {
       await ordersApi.linkCustomer(linkOrder.id, customer.id);
       toast.success(`Linked ${customer.firstName} ${customer.lastName} to ${linkOrder.orderNumber}`);
+      if (linkThen !== 'refund') {
+        const r = await ordersApi.getOrder(linkOrder.id);
+        const fresh = r.data.data.order;
+        setSelectedOrder((cur: any) => (cur && cur.id === fresh.id ? { ...fresh, refunds: cur.refunds } : cur));
+        if (linkThen === 'ticket') setTicketFor(fresh);
+        setLinkOrder(null);
+        setLinkSearch('');
+        setLinkResults([]);
+        fetchOrders();
+        return;
+      }
       // Refresh orders and continue into the refund modal
       await fetchOrders();
       const fullOrder: Order = {
@@ -933,9 +984,11 @@ export default function OrdersPage() {
                         <span className="flex items-center gap-2">
                           <span>{(order as any).customerNameSnapshot}</span>
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-gray-600/40 text-gray-300 border border-gray-500/40">
-                            WALK-IN
+                            {order.source === 'magento' ? 'WEBSITE' : 'WALK-IN'}
                           </span>
                         </span>
+                      ) : order.source === 'magento' ? (
+                        'Website guest'
                       ) : (
                         'Walk-in'
                       )}
@@ -1005,7 +1058,7 @@ export default function OrdersPage() {
                           need to open and edit all orders") — on fully
                           refunded orders the modal simply has nothing
                           left to select, but Add Lights still works. */}
-                      {canRefund && (
+                      {canRefund && order.source !== 'magento' && (
                         <button
                           onClick={() => viewOrder(order.id)}
                           className="p-2 hover:bg-orange-500/20 text-orange-400 rounded"
@@ -1104,7 +1157,7 @@ export default function OrdersPage() {
                 Refund Credits & Exchange / Refund / Record Payment, with
                 the Order History underneath. */}
             <div className="flex justify-between items-start mb-4 gap-3 flex-wrap">
-              <button onClick={() => setSelectedOrder(null)} className="modal-back-btn">
+              <button onClick={closeOrder} className="modal-back-btn">
                 <ArrowLeftIcon className="h-5 w-5" /> Back
               </button>
               <div className="flex items-center gap-2">
@@ -1116,7 +1169,8 @@ export default function OrdersPage() {
               </div>
               <div className="text-right">
                 <div className="flex items-center justify-end gap-2 mb-1">
-                  {['pending', 'processing', 'backorder_pending', 'layby_active', 'layby_expired'].includes(
+                  {!isWebOrder(selectedOrder) &&
+                    ['pending', 'processing', 'backorder_pending', 'layby_active', 'layby_expired'].includes(
                     selectedOrder.status,
                   ) && (
                     <button
@@ -1136,6 +1190,16 @@ export default function OrdersPage() {
                     }}
                   >
                     <PrinterIcon className="h-4 w-4" /> Print Invoice
+                  </button>
+                  {/* Label for the stock's box when it arrives (Sally,
+                      16 Oct 2026) — same 89 x 36 mm stock as the product
+                      sale ticket. */}
+                  <button
+                    className="btn-secondary flex items-center gap-1 text-xs py-1"
+                    title="Print a label with the order number, customer, phone and today's date for the box"
+                    onClick={() => setTicketFor(selectedOrder)}
+                  >
+                    <TagIcon className="h-4 w-4" /> Customer Ticket
                   </button>
                   {/* Orders imported from the old Excel system keep the
                       exact invoice the customer received. */}
@@ -1196,9 +1260,17 @@ export default function OrdersPage() {
                 </div>
               </div>
 
+              {isWebOrder(selectedOrder) && (
+                <div className="rounded-lg p-3 text-sm border border-blue-500/40 bg-blue-500/10 text-blue-300">
+                  Website order {selectedOrder.magentoIncrementId ? `#${selectedOrder.magentoIncrementId} ` : ''}
+                  — view only. Payments, refunds and changes are made in Magento.
+                </div>
+              )}
+
               {/* Customer details on the order (Sally, 15 Oct 2026: "name,
-                  business name, address and phone number and email"). */}
-              {(selectedOrder.customer || selectedOrder.customerNameSnapshot) && (() => {
+                  business name, address and phone number and email"). A
+                  walk-in shows Link customer (16 Oct 2026). */}
+              {(() => {
                 const c = selectedOrder.customer;
                 const name = c
                   ? [c.firstName, c.lastName].filter(Boolean).join(' ')
@@ -1212,7 +1284,7 @@ export default function OrdersPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
                       <div>
                         <span className="text-gray-400">Name: </span>
-                        <span className="font-semibold">{name}</span>
+                        <span className="font-semibold">{name || 'Walk-in'}</span>
                         {c?.isTrade && (
                           <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/40">
                             TRADE
@@ -1245,9 +1317,27 @@ export default function OrdersPage() {
                           {address}
                         </div>
                       )}
-                      {!c && (
-                        <div className="text-gray-500 italic md:col-span-2">
-                          Not linked to a saved customer — use Link Customer to attach one.
+                      {!c && isWebOrder(selectedOrder) && (
+                        <div className="text-gray-400 md:col-span-2 whitespace-pre-wrap">
+                          {selectedOrder.internalNotes || 'Website guest checkout.'}
+                        </div>
+                      )}
+                      {!c && !isWebOrder(selectedOrder) && (
+                        <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+                          <span className="text-gray-500 italic">
+                            Walk-in — no customer attached to this order.
+                          </span>
+                          <button
+                            className="btn-secondary btn-sm flex items-center gap-1"
+                            onClick={() => {
+                              setLinkThen('order');
+                              setLinkOrder(selectedOrder);
+                              setLinkSearch('');
+                              setLinkResults([]);
+                            }}
+                          >
+                            <UserPlusIcon className="h-4 w-4" /> Link customer
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1315,7 +1405,7 @@ export default function OrdersPage() {
                       <td className="py-1.5 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-2 justify-end">
                           {/* Status drop-down per line (Sally, 10 Sep, row 469). */}
-                          {canRefund && !statusLocked && (
+                          {canRefund && !statusLocked && !isWebOrder(selectedOrder) && (
                             <select
                               className="input py-0.5 px-2 text-xs w-32"
                               value={lineStatusValue(item)}
@@ -1335,7 +1425,7 @@ export default function OrdersPage() {
                             </select>
                           )}
                           <span className="font-medium">${parseFloat(item.rowTotal).toFixed(2)}</span>
-                          {canManage && openBackorder && (
+                          {canManage && openBackorder && !isWebOrder(selectedOrder) && (
                             <button
                               onClick={() => handleFulfilBackorder(selectedOrder, [item.id])}
                               className="p-1.5 hover:bg-green-500/20 text-green-400 rounded"
@@ -1361,10 +1451,16 @@ export default function OrdersPage() {
                     </span>
                   </span>
                   <span>
-                    Cashier:{' '}
-                    <span className="text-gray-200">
-                      {selectedOrder.user?.firstName} {selectedOrder.user?.lastName}
-                    </span>
+                    {isWebOrder(selectedOrder) ? (
+                      <>Sold on: <span className="text-gray-200">Website</span></>
+                    ) : (
+                      <>
+                        Cashier:{' '}
+                        <span className="text-gray-200">
+                          {selectedOrder.user?.firstName} {selectedOrder.user?.lastName}
+                        </span>
+                      </>
+                    )}
                   </span>
                   {selectedOrder.laybyExpiresAt && (
                     <span>Lay By expires {formatDate(selectedOrder.laybyExpiresAt)}</span>
@@ -1437,11 +1533,12 @@ export default function OrdersPage() {
               <div className="flex flex-wrap gap-3 justify-end">
                 <button
                   className="btn-secondary"
-                  onClick={() => setSelectedOrder(null)}
+                  onClick={closeOrder}
                   disabled={isTakingLaybyPayment}
                 >
-                  Cancel
+                  {isWebOrder(selectedOrder) ? 'Close' : 'Cancel'}
                 </button>
+                {!isWebOrder(selectedOrder) && (
                 <button
                   className="btn-primary bg-green-600 hover:bg-green-700"
                   onClick={() => setEditItemsOrder(selectedOrder)}
@@ -1450,7 +1547,8 @@ export default function OrdersPage() {
                 >
                   Add Lights
                 </button>
-                {canRefund && (
+                )}
+                {canRefund && !isWebOrder(selectedOrder) && (
                   <button
                     className="btn-primary bg-cyan-600 hover:bg-cyan-700"
                     onClick={() => openRefundModal(selectedOrder)}
@@ -1460,7 +1558,7 @@ export default function OrdersPage() {
                     Refund Credits &amp; Exchange
                   </button>
                 )}
-                {canRefund && (
+                {canRefund && !isWebOrder(selectedOrder) && (
                   <button
                     className="btn-primary bg-orange-600 hover:bg-orange-700"
                     onClick={() => openRefundModal(selectedOrder)}
@@ -1660,7 +1758,7 @@ export default function OrdersPage() {
                   <p className="text-sm text-gray-400">
                     Customer note <span className="text-gray-600">(prints on invoice)</span>
                   </p>
-                  {notesDraft === null && (
+                  {notesDraft === null && !isWebOrder(selectedOrder) && (
                     <button
                       onClick={() =>
                         setNotesDraft(selectedOrder.notes || '')
@@ -2208,6 +2306,7 @@ export default function OrdersPage() {
                   <button
                     className="text-blue-400 underline"
                     onClick={() => {
+                      setLinkThen('refund');
                       setLinkOrder(refundOrder);
                       setLinkSearch('');
                       setLinkResults([]);
@@ -2330,7 +2429,50 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {/* Link Customer modal — shown when user tries to refund a walk-in order */}
+      {/* Customer ticket preview at true size, then print (one label). */}
+      {ticketFor && (() => {
+        const t = ticketData(ticketFor);
+        const noCustomer = !ticketFor.customer && !isWebOrder(ticketFor);
+        return (
+          <div className="modal-backdrop-top">
+            <div className="m-auto flex flex-col items-center gap-4">
+              <div className="shadow-lg" dangerouslySetInnerHTML={{ __html: customerTicketHtml(t) }} />
+              <p className="text-xs text-gray-400">Actual size: 89mm wide × 36mm high</p>
+              {noCustomer && (
+                <div className="flex items-center gap-3 text-sm text-amber-300">
+                  <span>No customer on this order — link one to print their name and phone.</span>
+                  <button
+                    className="btn-secondary btn-sm flex items-center gap-1"
+                    onClick={() => {
+                      setLinkThen('ticket');
+                      setLinkOrder(ticketFor);
+                      setLinkSearch('');
+                      setLinkResults([]);
+                      setTicketFor(null);
+                    }}
+                  >
+                    <UserPlusIcon className="h-4 w-4" /> Link customer
+                  </button>
+                </div>
+              )}
+              <div className="flex gap-3 w-64">
+                <button className="btn-secondary flex-1" onClick={() => setTicketFor(null)}>
+                  Close
+                </button>
+                <button
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
+                  onClick={() => printTicketHtml(t.orderNumber, customerTicketHtml(t))}
+                >
+                  <PrinterIcon className="h-5 w-5" />
+                  Print
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Link Customer modal — walk-in orders (refund, or the order's Customer card) */}
       {linkOrder && (
         <div className="modal-backdrop-top">
           <div className="modal-content">
@@ -2345,8 +2487,9 @@ export default function OrdersPage() {
               <div className="text-right">
                 <h3 className="text-lg font-bold">Link Customer to Order</h3>
                 <p className="text-sm text-gray-400">
-                  {linkOrder.orderNumber} is a walk-in order. Attach a customer
-                  so store credit can be issued on refund.
+                  {linkThen === 'refund'
+                    ? `${linkOrder.orderNumber} is a walk-in order. Attach a customer so store credit can be issued on refund.`
+                    : `${linkOrder.orderNumber} is a walk-in order. Attach the customer so their name and phone show on the order and its ticket.`}
                 </p>
               </div>
             </div>

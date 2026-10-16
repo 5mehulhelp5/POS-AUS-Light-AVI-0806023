@@ -216,14 +216,16 @@ export class OrdersController {
   async linkCustomer(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { customerId: number },
+    @CurrentUser() user: any,
   ) {
+    await this.ordersService.assertEditable(id);
     if (!body?.customerId) {
       return {
         success: false,
         error: { code: 'BAD_REQUEST', message: 'customerId is required' },
       };
     }
-    const order = await this.ordersService.linkCustomer(id, Number(body.customerId));
+    const order = await this.ordersService.linkCustomer(id, Number(body.customerId), user?.id);
     return {
       success: true,
       data: {
@@ -252,6 +254,9 @@ export class OrdersController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { notes?: string | null; internalNotes?: string | null },
   ) {
+    // The staff-only internal note stays editable on website orders; the
+    // customer-facing note prints on the invoice, so it doesn't.
+    if (body?.notes !== undefined) await this.ordersService.assertEditable(id);
     const order = await this.ordersService.updateNotes(
       id,
       body?.notes,
@@ -292,6 +297,7 @@ export class OrdersController {
     },
     @CurrentUser() user: any,
   ) {
+    await this.ordersService.assertEditable(id);
     const userRole = {
       id: user.role.id,
       name: user.role.name,
@@ -318,6 +324,7 @@ export class OrdersController {
     @Body() body: { amount: number },
     @CurrentUser() user: any,
   ) {
+    await this.ordersService.assertEditable(id);
     const order = await this.ordersService.adjustPayment(
       id,
       paymentId,
@@ -342,6 +349,7 @@ export class OrdersController {
     @Body() body: { method: string; reference?: string },
     @CurrentUser() user: any,
   ) {
+    await this.ordersService.assertEditable(id);
     const order = await this.ordersService.changePaymentMethod(
       id,
       paymentId,
@@ -361,6 +369,7 @@ export class OrdersController {
     @Body() dto: CreateRefundDto,
     @CurrentUser() user: any,
   ) {
+    await this.ordersService.assertEditable(id);
     const refund = await this.refundsService.create(id, user.id, dto);
     return {
       success: true,
@@ -407,6 +416,7 @@ export class OrdersController {
     },
     @CurrentUser() user: any,
   ) {
+    await this.ordersService.assertEditable(id);
     const order = await this.ordersService.takeLaybyPayment(id, user.id, body);
     const balance = await this.ordersService.getLaybyBalance(id);
     return {
@@ -435,6 +445,7 @@ export class OrdersController {
     @Body() body: { reason?: string; refundAsStoreCredit?: boolean },
     @CurrentUser() user: any,
   ) {
+    await this.ordersService.assertEditable(id);
     const order = await this.ordersService.cancelLayby(id, user.id, {
       reason: body?.reason,
       refundAsStoreCredit: !!body?.refundAsStoreCredit,
@@ -484,6 +495,7 @@ export class OrdersController {
     if (status !== 'backorder' && status !== 'layby' && status !== 'paid') {
       throw new BadRequestException('status must be backorder, layby or paid');
     }
+    await this.ordersService.assertEditable(id);
     const order = await this.ordersService.setItemStatus(id, itemId, status, user.id);
     return { success: true, data: { order } };
   }
@@ -498,6 +510,7 @@ export class OrdersController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { itemIds: number[] },
   ) {
+    await this.ordersService.assertEditable(id);
     const order = await this.ordersService.fulfillBackorderItems(
       id,
       body?.itemIds || [],

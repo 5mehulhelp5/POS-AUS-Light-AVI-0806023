@@ -62,6 +62,114 @@ const defaultTradingHours: TradingHours = {
   sunday: { open: '10:00', close: '16:00', closed: false },
 };
 
+// Website orders brought into the POS every 15 minutes, view-only (Sally,
+// 16 Oct 2026: "when can website sales come across to POS ... can only be
+// viewed and make no changes to invoice").
+type WebsiteOrdersState = {
+  enabled: boolean;
+  syncedUntil: string | null;
+  running: boolean;
+  progress: { processed: number; fetched: number; created: number; updated: number; errors: number; message: string };
+  lastRunAt: string | null;
+  lastResult: { success: boolean; message: string } | null;
+};
+
+function WebsiteOrdersCard() {
+  const [state, setState] = useState<WebsiteOrdersState | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const load = async () => {
+    try {
+      const r = await syncApi.getWebsiteOrders();
+      setState(r.data.data);
+      setUnavailable(false);
+    } catch {
+      setUnavailable(true);
+    }
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  // Follow an import while it runs.
+  useEffect(() => {
+    if (!state?.running) return;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [state?.running]);
+
+  const toggle = async () => {
+    if (!state) return;
+    setSaving(true);
+    try {
+      const r = await syncApi.setWebsiteOrders(!state.enabled);
+      setState(r.data.data);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const importNow = async () => {
+    setSaving(true);
+    try {
+      await syncApi.importWebsiteOrders();
+      setState((s) => (s ? { ...s, running: true } : s));
+      setTimeout(load, 1000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card p-6">
+      <h2 className="text-lg font-semibold mb-1">Website Orders</h2>
+      <p className="text-sm text-gray-400 mb-4">
+        Brings orders placed on the website into the POS every 15 minutes (new orders, and status or
+        refund changes to earlier ones). They show under Orders with an M2 badge and are view-only —
+        payments, refunds and changes are made in Magento. They're not counted in the in-store reports
+        (pick "Website orders" there to see them).
+      </p>
+      {unavailable || !state ? (
+        <div className="text-gray-400 text-sm">{unavailable ? 'Unavailable — backend needs updating.' : 'Loading…'}</div>
+      ) : (
+        <div className="space-y-3 text-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              className={`px-4 py-2 rounded-lg font-medium ${state.enabled ? 'bg-green-600 text-white' : 'bg-pos-accent text-gray-300'}`}
+              onClick={toggle}
+              disabled={saving}
+            >
+              {state.enabled ? 'On — every 15 minutes' : 'Off'}
+            </button>
+            <button className="btn-secondary" onClick={importNow} disabled={saving || state.running}>
+              {state.running ? 'Importing…' : 'Import new website orders now'}
+            </button>
+          </div>
+          {state.running && (
+            <p className="text-gray-300">
+              {state.progress.message} ({state.progress.processed}/{state.progress.fetched} done,{' '}
+              {state.progress.created} new, {state.progress.updated} updated)
+            </p>
+          )}
+          {state.lastRunAt && !state.running && (
+            <p className="text-gray-400">
+              Last run {new Date(state.lastRunAt).toLocaleString()}
+              {state.lastResult && (
+                <span className={state.lastResult.success ? 'text-green-400' : 'text-amber-400'}>
+                  {' '}— {state.lastResult.message}
+                </span>
+              )}
+            </p>
+          )}
+          {state.syncedUntil && (
+            <p className="text-gray-500 text-xs">
+              Up to date with Magento as of {new Date(state.syncedUntil.replace(' ', 'T') + 'Z').toLocaleString()}.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'store' | 'payments' | 'roles' | 'system' | 'sync' | 'ledstrip' | 'trade'>('store');
   const [isLoading, setIsLoading] = useState(true);
@@ -1656,6 +1764,8 @@ export default function SettingsPage() {
                   {syncResult.message}
                 </div>
               )}
+
+              <WebsiteOrdersCard />
 
               {/* Automatic product sync schedule (Sally, 10 Sep 2026) */}
               <div className="card p-6">

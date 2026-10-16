@@ -1009,6 +1009,8 @@ export default function PaymentModal({
         buyerType,
         customerName:
           customerName.trim() || (walkIn ? 'Walk-in Customer' : undefined),
+        // Printed above the name on the invoice (Sally, 16 Oct 2026).
+        customerCompany: tradeCompanyName.trim() || undefined,
         customerPhone: customerPhone.trim() || undefined,
         customerEmail: customerEmail.trim() || undefined,
         customerAddress: [customerStreet, customerCity, customerState, customerPostcode].filter(s => s.trim()).join(', ') || undefined,

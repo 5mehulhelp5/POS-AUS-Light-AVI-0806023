@@ -15,6 +15,7 @@ import { useSelector } from 'react-redux';
 import type { RootState } from '../../../store';
 import { fmtPct } from '../../../utils/pricingConfig';
 import { posImage } from '../../../utils/imageUrl';
+import { escHtml, textWidthMm, printTicketHtml } from '../../../utils/ticket';
 import {
   isProductOnSale,
   effectiveProductPrice,
@@ -819,27 +820,11 @@ type TicketProduct = {
   specialPrice: number | string | null;
 };
 
-const escHtml = (v: unknown): string =>
-  String(v ?? '').replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
-  );
-
 // The 89 x 36 mm ticket as self-contained HTML (inline styles only, so the
 // print document needs no app CSS). Layout per Sally, 12 Oct 2026: "put
 // sku top left corner and price then can be bigger" — SKU top-left, the
 // name under it (2 lines max), and the price across the full width as big
 // as it fits.
-// Width in mm of `text` at `pt` points in `font` (CSS font shorthand
-// without the size), measured with the browser's real font metrics.
-let measureCtx: CanvasRenderingContext2D | null = null;
-function textWidthMm(text: string, font: string, pt: number): number {
-  measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
-  if (!measureCtx) return text.length * pt * 0.3528 * 0.6; // rough fallback
-  measureCtx.font = `${font.replace('{size}', '100px')}`;
-  const px = measureCtx.measureText(text).width * (pt / 75); // 100px = 75pt
-  return px / 3.7795; // 96 dpi: 3.7795 px per mm
-}
-
 function saleTicketHtml(p: TicketProduct, onSale: boolean): string {
   const shown = Number(onSale ? p.specialPrice : p.price);
   const text = `$${shown.toFixed(2)}`;
@@ -869,29 +854,6 @@ function saleTicketHtml(p: TicketProduct, onSale: boolean): string {
   </div>`;
 }
 
-// Prints the ticket from a hidden iframe holding only the ticket, so the
-// job is exactly one 89 x 36 mm page whatever is on screen.
 function printSaleTicket(p: TicketProduct, onSale: boolean) {
-  const frame = document.createElement('iframe');
-  frame.setAttribute('aria-hidden', 'true');
-  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
-  document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  const win = frame.contentWindow;
-  if (!doc || !win) {
-    frame.remove();
-    return;
-  }
-  doc.open();
-  doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escHtml(p.sku)}</title>
-    <style>@page{size:89mm 36mm;margin:0}html,body{margin:0;padding:0;background:#fff}
-    body{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head>
-    <body>${saleTicketHtml(p, onSale)}</body></html>`);
-  doc.close();
-  setTimeout(() => {
-    win.focus();
-    win.print();
-    // print() blocks until the dialog closes; tidy up afterwards.
-    setTimeout(() => frame.remove(), 1000);
-  }, 150);
+  printTicketHtml(p.sku, saleTicketHtml(p, onSale));
 }

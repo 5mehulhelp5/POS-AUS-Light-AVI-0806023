@@ -258,7 +258,9 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
         ? 'BANK TRANSFER'
         : m === 'store_credit'
           ? 'STORE CREDIT'
-          : 'EFTPOS';
+          : m === 'website'
+            ? 'WEBSITE'
+            : 'EFTPOS';
 
   // Aggregate qty splits across the order so we can render per-line
   // TAKEN / B-ORDER / LAY-BY columns matching the printed template.
@@ -369,11 +371,21 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '22px', gap: '40px' }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: '11px', color: MUTED, letterSpacing: '1px', marginBottom: '6px' }}>BILL TO</div>
-              {invoice.customerName && (
-                <div style={{ fontSize: '15px', fontWeight: 800, color: INK }}>{invoice.customerName}</div>
-              )}
-              {invoice.customerCompany && (
-                <div style={{ marginTop: '2px' }}>{invoice.customerCompany}</div>
+              {/* Business name first when there is one (Sally, 16 Oct 2026:
+                  "can that go first rather than the first name" — e.g.
+                  ASTRO ELECTRICIAN above Theo). */}
+              {invoice.customerCompany ? (
+                <>
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: INK }}>{invoice.customerCompany}</div>
+                  {invoice.customerName &&
+                    invoice.customerName.trim().toLowerCase() !== invoice.customerCompany.trim().toLowerCase() && (
+                      <div style={{ marginTop: '2px' }}>{invoice.customerName}</div>
+                    )}
+                </>
+              ) : (
+                invoice.customerName && (
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: INK }}>{invoice.customerName}</div>
+                )
               )}
               {(addr.line1 || addr.line2) && (
                 <>

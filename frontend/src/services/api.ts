@@ -494,6 +494,11 @@ export const syncApi = {
   // Automatic product sync schedule (manager read, admin write).
   getAutoSync: () => api.get('/sync/auto'),
   updateAutoSync: (cfg: AutoSyncConfig) => api.put('/sync/auto', cfg),
+  // Website orders into the POS every 15 minutes, view-only (manager
+  // read, admin write).
+  getWebsiteOrders: () => api.get('/sync/website-orders'),
+  setWebsiteOrders: (enabled: boolean) => api.put('/sync/website-orders', { enabled }),
+  importWebsiteOrders: () => api.post('/sync/website-orders/import'),
 };
 
 export type AutoSyncMode = 'off' | 'interval' | 'daily';

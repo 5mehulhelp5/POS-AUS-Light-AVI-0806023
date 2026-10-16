@@ -6,7 +6,14 @@ import { MagentoService, MagentoProduct, MagentoCustomer, MagentoOrder } from '.
 import { Product, ProductType } from '../products/entities/product.entity';
 import { Category } from '../products/entities/category.entity';
 import { Customer, SyncStatus } from '../customers/entities/customer.entity';
-import { Order, OrderStatus, PaymentStatus, OrderSyncStatus, OrderSource } from '../orders/entities/order.entity';
+import {
+  Order,
+  OrderStatus,
+  PaymentStatus,
+  OrderSyncStatus,
+  OrderSource,
+  DeliveryType,
+} from '../orders/entities/order.entity';
 import { OrderItem } from '../orders/entities/order-item.entity';
 import { SyncLog, SyncType, SyncDirection, SyncLogStatus } from './entities/sync-log.entity';
 import { SettingsService } from '../settings/settings.service';
@@ -32,6 +39,29 @@ export const DEFAULT_AUTO_SYNC: AutoSyncConfig = {
   dailyTime: '06:00',
 };
 const STORE_TZ = 'Australia/Melbourne';
+
+// Website orders into the POS, view-only (Sally, 16 Oct 2026: "when can
+// website sales come across to POS in live version? Website sales can
+// only be viewed and make no changes to invoice"). Every 15 minutes the
+// POS reads the Magento orders created or changed since the last run.
+// `syncedUntil` is the Magento (UTC) time the next run reads from.
+export const WEBSITE_ORDER_IMPORT_KEY = 'website_order_import';
+export interface WebsiteOrderImportState {
+  enabled: boolean;
+  syncedUntil: string | null;
+}
+function normaliseWebsiteOrderImport(raw: unknown): WebsiteOrderImportState {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const until = typeof r.syncedUntil === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(r.syncedUntil)
+    ? r.syncedUntil
+    : null;
+  // On unless someone switched it off.
+  return { enabled: r.enabled !== false, syncedUntil: until };
+}
+// Magento's REST filters take UTC "YYYY-MM-DD HH:mm:ss".
+function magentoUtc(d: Date): string {
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+}
 
 export function normaliseAutoSyncConfig(raw: unknown): AutoSyncConfig {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -186,6 +216,152 @@ export class SyncService {
       nextRunLabel,
       timezone: STORE_TZ,
     };
+  }
+
+  // ---- website order import ----
+  private websiteImportLastRunAt: Date | null = null;
+  private websiteImportLastResult: { success: boolean; message: string } | null = null;
+
+  async getWebsiteOrderImport(): Promise<WebsiteOrderImportState> {
+    const raw = await this.settingsService.getValue<unknown>(WEBSITE_ORDER_IMPORT_KEY, null);
+    return normaliseWebsiteOrderImport(raw);
+  }
+
+  private async saveWebsiteOrderImport(state: WebsiteOrderImportState, userId?: number): Promise<void> {
+    await this.settingsService.set(
+      WEBSITE_ORDER_IMPORT_KEY,
+      state,
+      SettingType.JSON,
+      'Website (Magento) orders brought into the POS every 15 minutes, view-only',
+      userId,
+    );
+  }
+
+  async setWebsiteOrderImportEnabled(enabled: boolean, userId?: number): Promise<WebsiteOrderImportState> {
+    const state = { ...(await this.getWebsiteOrderImport()), enabled: !!enabled };
+    await this.saveWebsiteOrderImport(state, userId);
+    this.logger.log(`Website order import ${state.enabled ? 'switched on' : 'switched off'}`);
+    return state;
+  }
+
+  async getWebsiteOrderImportState() {
+    const state = await this.getWebsiteOrderImport();
+    return {
+      ...state,
+      running: this.orderSyncProgress.running,
+      progress: this.orderSyncProgress,
+      lastRunAt: this.websiteImportLastRunAt?.toISOString() ?? null,
+      lastResult: this.websiteImportLastResult,
+    };
+  }
+
+  @Cron('0 */15 * * * *')
+  async websiteOrderImportTick(): Promise<void> {
+    let state: WebsiteOrderImportState;
+    try {
+      state = await this.getWebsiteOrderImport();
+    } catch (err) {
+      this.logger.warn(`Website order import: could not read settings (${err})`);
+      return;
+    }
+    if (!state.enabled || this.orderSyncProgress.running) return;
+    await this.importWebsiteOrders();
+  }
+
+  // Reads the Magento orders created or changed since the last run and
+  // saves them (new ones added, existing ones get status/payment updates).
+  // Re-reading an order is harmless — they're matched on the Magento id.
+  async importWebsiteOrders(): Promise<SyncResult> {
+    if (this.orderSyncProgress.running) {
+      return { success: false, message: 'An order sync is already in progress' };
+    }
+    const startedAt = new Date();
+    this.websiteImportLastRunAt = startedAt;
+    this.orderSyncProgress = {
+      running: true,
+      startedAt,
+      finishedAt: null,
+      fetched: 0,
+      processed: 0,
+      created: 0,
+      updated: 0,
+      errors: 0,
+      lastError: null,
+      message: 'Reading new website orders from Magento...',
+    };
+    const finish = (result: SyncResult): SyncResult => {
+      this.orderSyncProgress.running = false;
+      this.orderSyncProgress.finishedAt = new Date();
+      this.orderSyncProgress.message = result.message;
+      this.websiteImportLastResult = { success: result.success, message: result.message };
+      return result;
+    };
+
+    try {
+      const state = await this.getWebsiteOrderImport();
+      let since = state.syncedUntil;
+      if (!since) {
+        // First run: start two days before the newest website order the
+        // POS already has (the one-off import of 14 Apr 2026).
+        const row = await this.orderRepository
+          .createQueryBuilder('o')
+          .select('MAX(o.createdAt)', 'm')
+          .where('o.source = :s', { s: OrderSource.MAGENTO })
+          .getRawOne<{ m: Date | string | null }>();
+        const newest = row?.m ? new Date(row.m) : startedAt;
+        since = magentoUtc(new Date(newest.getTime() - 2 * 86_400_000));
+      }
+
+      const orders = await this.magentoService.fetchOrdersUpdatedSince(since);
+      this.orderSyncProgress.fetched = orders.length;
+      this.orderSyncProgress.message = `Saving ${orders.length} website orders...`;
+
+      let created = 0;
+      let updated = 0;
+      const errors: string[] = [];
+      let firstFailedAt: string | null = null;
+      for (const mo of orders) {
+        try {
+          const r = await this.syncSingleOrder(mo);
+          if (r === 'created') created++;
+          else updated++;
+          this.orderSyncProgress.created = created;
+          this.orderSyncProgress.updated = updated;
+        } catch (error) {
+          const msg = `Failed to import website order ${mo.increment_id}: ${error}`;
+          this.logger.error(msg);
+          errors.push(msg);
+          this.orderSyncProgress.errors++;
+          this.orderSyncProgress.lastError = msg;
+          if (!firstFailedAt && mo.updated_at) firstFailedAt = mo.updated_at;
+        }
+        this.orderSyncProgress.processed++;
+      }
+
+      // Next run reads from 10 minutes before this one started (an order
+      // saved in Magento while we were reading isn't missed), or from the
+      // first order that failed so it's retried.
+      let next = magentoUtc(new Date(startedAt.getTime() - 10 * 60_000));
+      if (firstFailedAt && firstFailedAt < next) next = firstFailedAt;
+      await this.saveWebsiteOrderImport({ ...(await this.getWebsiteOrderImport()), syncedUntil: next });
+
+      if (orders.length > 0 || errors.length > 0) {
+        await this.logSync('orders', created + updated, errors.length === 0, { created, updated, errors });
+        this.logger.log(
+          `Website order import: ${created} new, ${updated} updated, ${errors.length} errors (since ${since} UTC)`,
+        );
+      }
+      return finish({
+        success: errors.length === 0,
+        message: `Website orders: ${created} new, ${updated} updated${errors.length ? `, ${errors.length} errors` : ''}`,
+        errors: errors.length ? errors : undefined,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Website order import failed: ${message}`);
+      this.orderSyncProgress.lastError = message;
+      return finish({ success: false, message: `Website order import failed: ${message}`, errors: [message] });
+    }
   }
 
   private isProductSyncBusy(): boolean {
@@ -1324,21 +1500,41 @@ export class SyncService {
       pending: OrderStatus.PENDING,
       processing: OrderStatus.PROCESSING,
       complete: OrderStatus.COMPLETE,
-      closed: OrderStatus.COMPLETE,
+      // Closed in Magento = refunded with a credit memo.
+      closed: OrderStatus.REFUNDED,
       canceled: OrderStatus.CANCELLED,
       holded: OrderStatus.PENDING,
     };
-    const status = statusMap[magentoOrder.status] || OrderStatus.PENDING;
+    // The store also uses custom statuses (e.g. eway_captured); those
+    // fall back to Magento's underlying order state.
+    const stateMap: Record<string, OrderStatus> = {
+      new: OrderStatus.PENDING,
+      pending_payment: OrderStatus.PENDING,
+      payment_review: OrderStatus.PENDING,
+      processing: OrderStatus.PROCESSING,
+      complete: OrderStatus.COMPLETE,
+      closed: OrderStatus.REFUNDED,
+      canceled: OrderStatus.CANCELLED,
+      holded: OrderStatus.PENDING,
+    };
+    const status =
+      statusMap[magentoOrder.status] || stateMap[magentoOrder.state] || OrderStatus.PENDING;
 
     // Map payment status
-    const paid = (magentoOrder.total_paid || 0) >= magentoOrder.grand_total;
-    const paymentStatus = paid
-      ? PaymentStatus.PAID
-      : (magentoOrder.total_paid || 0) > 0
-        ? PaymentStatus.PARTIAL
-        : PaymentStatus.PENDING;
+    const grand = Number(magentoOrder.grand_total || 0);
+    const totalPaid = Number(magentoOrder.total_paid || 0);
+    const refunded = Number(magentoOrder.total_refunded || 0) >= grand - 0.005 && grand > 0;
+    const paid = totalPaid >= grand;
+    const paymentStatus = refunded
+      ? PaymentStatus.REFUNDED
+      : paid
+        ? PaymentStatus.PAID
+        : totalPaid > 0
+          ? PaymentStatus.PARTIAL
+          : PaymentStatus.PENDING;
 
-    // Link to existing POS customer via magentoId (if not guest)
+    // Link to the POS customer: by Magento customer id, else (guest
+    // checkout) by email address.
     let customerId: number | null = null;
     if (magentoOrder.customer_id && !magentoOrder.customer_is_guest) {
       const customer = await this.customerRepository.findOne({
@@ -1346,6 +1542,36 @@ export class SyncService {
       });
       customerId = customer?.id || null;
     }
+    const email = (magentoOrder.customer_email || magentoOrder.billing_address?.email || '').trim();
+    if (!customerId && email) {
+      const byEmail = await this.customerRepository
+        .createQueryBuilder('c')
+        .where('LOWER(c.email) = :e', { e: email.toLowerCase() })
+        .orderBy('c.id', 'ASC')
+        .getOne();
+      customerId = byEmail?.id || null;
+    }
+
+    // Who bought it and how to reach them — website orders often aren't
+    // linked to a POS customer, so the order keeps its own copy.
+    const bill = magentoOrder.billing_address || {};
+    const buyer =
+      [magentoOrder.customer_firstname, magentoOrder.customer_lastname].filter(Boolean).join(' ').trim() ||
+      [bill.firstname, bill.lastname].filter(Boolean).join(' ').trim() ||
+      null;
+    const contactNote =
+      [
+        'Website order',
+        bill.company ? `Company: ${bill.company}` : '',
+        email ? `Email: ${email}` : '',
+        bill.telephone ? `Phone: ${bill.telephone}` : '',
+        magentoOrder.payment?.method ? `Payment: ${magentoOrder.payment.method}` : '',
+        magentoOrder.shipping_description ? `Shipping: ${magentoOrder.shipping_description}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    const shipping = Number(magentoOrder.shipping_incl_tax ?? magentoOrder.shipping_amount ?? 0) || 0;
+    const pickup = /pick\s*-?\s*up|collect/i.test(magentoOrder.shipping_description || '');
 
     // Find existing POS order by magentoOrderId
     let order = await this.orderRepository.findOne({
@@ -1373,7 +1599,11 @@ export class SyncService {
         syncAttempts: 1,
         syncedAt: new Date(),
         source: OrderSource.MAGENTO,
-        notes: magentoOrder.payment?.method ? `Magento payment: ${magentoOrder.payment.method}` : null,
+        notes: null,
+        internalNotes: contactNote,
+        customerNameSnapshot: buyer ? buyer.slice(0, 200) : null,
+        deliveryType: shipping > 0 || !pickup ? DeliveryType.DELIVERY : DeliveryType.PICKUP,
+        deliveryFee: Math.round(shipping * 100) / 100,
       });
     } else {
       // Update status + totals (don't rewrite items — M2 is source of truth for existing orders)
@@ -1384,6 +1614,9 @@ export class SyncService {
       order.source = OrderSource.MAGENTO;
       order.syncStatus = OrderSyncStatus.SYNCED;
       order.syncedAt = new Date();
+      // Fill in what the first import (Apr 2026) didn't keep.
+      if (!order.customerNameSnapshot && buyer) order.customerNameSnapshot = buyer.slice(0, 200);
+      if (!order.internalNotes) order.internalNotes = contactNote;
     }
 
     const savedOrder = await this.orderRepository.save(order);

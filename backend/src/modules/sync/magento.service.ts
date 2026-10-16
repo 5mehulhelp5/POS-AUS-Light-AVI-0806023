@@ -144,12 +144,17 @@ export interface MagentoOrder {
   discount_amount: number;
   grand_total: number;
   total_paid?: number;
+  total_refunded?: number;
+  shipping_amount?: number;
+  shipping_incl_tax?: number;
+  shipping_description?: string;
   created_at: string;
   updated_at: string;
   items: MagentoOrderItem[];
   billing_address?: {
     firstname?: string;
     lastname?: string;
+    company?: string;
     telephone?: string;
     email?: string;
     street?: string[];
@@ -546,6 +551,41 @@ export class MagentoService {
       this.logger.error('Failed to fetch orders from Magento', error);
       throw error;
     }
+  }
+
+  // Orders created or changed at/after `since` (Magento's UTC
+  // "YYYY-MM-DD HH:mm:ss"), oldest change first. Used by the 15-minute
+  // website order import so it never re-reads the whole order history.
+  async fetchOrdersUpdatedSince(since: string): Promise<MagentoOrder[]> {
+    const token = await this.getAdminToken();
+    const pageSize = 100;
+    const out: MagentoOrder[] = [];
+    let page = 1;
+    let total = 0;
+    do {
+      const params = new URLSearchParams({
+        'searchCriteria[filter_groups][0][filters][0][field]': 'updated_at',
+        'searchCriteria[filter_groups][0][filters][0][value]': since,
+        'searchCriteria[filter_groups][0][filters][0][condition_type]': 'gteq',
+        'searchCriteria[sortOrders][0][field]': 'updated_at',
+        'searchCriteria[sortOrders][0][direction]': 'ASC',
+        'searchCriteria[pageSize]': String(pageSize),
+        'searchCriteria[currentPage]': String(page),
+      });
+      const response = await this.httpClient.get(`/rest/V1/orders?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 60000,
+      });
+      const data = response.data as MagentoOrdersResponse;
+      out.push(...(data.items || []));
+      total = data.total_count || 0;
+      // Magento returns the last page again for a page past the end —
+      // stop on a short page as well as on the count.
+      if (!data.items || data.items.length < pageSize) break;
+      page++;
+      await new Promise((r) => setTimeout(r, 200));
+    } while (out.length < total);
+    return out;
   }
 
   async fetchAllOrders(): Promise<MagentoOrder[]> {

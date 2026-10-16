@@ -1,12 +1,12 @@
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store';
 import { reportsApi, ReportRange } from '../../services/api';
 import {
   money, int, pct, change, dateTime, dateOnly, periodLabel, presetRange, PRESETS, Preset,
-  StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col,
+  StatCard, Bars, DataTable, PrintSheet, downloadCsv, Col, CsvAllowedContext,
 } from './reportKit';
 import PurchaseOrderEditor from './PurchaseOrder';
 import { formatPhone } from '../../utils/phone';
@@ -41,12 +41,21 @@ const CHANNELS: Array<{ id: NonNullable<ReportRange['channel']>; label: string }
 
 const errMsg = (e: any) => e?.response?.data?.message || e?.message || 'Could not load the report';
 
+// Sales staff: Sales Summary, Sales by Item, Sales by Staff and a read-only
+// Backorders, with no CSV downloads (Sally, 15 + 16 Oct 2026).
+const STAFF_TABS: Tab[] = ['summary', 'items', 'staff', 'backorders'];
+
 export default function ReportsPage() {
-  // Sales staff see the Backorders tab only, read-only (Sally, 15 Oct 2026).
   const me = useSelector((s: RootState) => s.auth.user);
   const isStaff = me?.role?.name !== 'admin' && me?.role?.name !== 'manager';
-  const visibleTabs = isStaff ? TABS.filter((t) => t.id === 'backorders') : TABS;
-  const [tab, setTab] = useState<Tab>(isStaff ? 'backorders' : 'eod');
+  const visibleTabs = isStaff ? TABS.filter((t) => STAFF_TABS.includes(t.id)) : TABS;
+  // Coming back from an order opened on the Backorders tab lands on
+  // Backorders again (Sally, 16 Oct 2026).
+  const location = useLocation();
+  const wantTab = (location.state as { tab?: Tab } | null)?.tab;
+  const [tab, setTab] = useState<Tab>(
+    wantTab && visibleTabs.some((t) => t.id === wantTab) ? wantTab : isStaff ? 'summary' : 'eod',
+  );
   const [preset, setPreset] = useState<Preset>('this_month');
   const [range, setRange] = useState(() => presetRange('this_month'));
   const [channel, setChannel] = useState<NonNullable<ReportRange['channel']>>('store');
@@ -62,8 +71,9 @@ export default function ReportsPage() {
   };
 
   return (
+    <CsvAllowedContext.Provider value={!isStaff}>
     <div className="h-full p-6 space-y-4 overflow-auto">
-      <h1 className="text-2xl font-bold">{isStaff ? 'Backorders' : 'Reports'}</h1>
+      <h1 className="text-2xl font-bold">Reports</h1>
 
       <div className="flex gap-1 overflow-x-auto pb-1">
         {visibleTabs.map((t) => (
@@ -136,7 +146,7 @@ export default function ReportsPage() {
       {tab === 'summary' && <SalesSummary params={params} />}
       {tab === 'pl' && <ProfitLoss params={params} />}
       {tab === 'clearance' && <Clearance params={params} />}
-      {tab === 'items' && <SalesByItem params={params} />}
+      {tab === 'items' && <SalesByItem params={params} showCost={!isStaff} />}
       {tab === 'trade' && <Trade params={params} onCustomer={setHistoryFor} />}
       {tab === 'staff' && <Staff params={params} />}
       {tab === 'customers' && <Customers params={params} onCustomer={setHistoryFor} />}
@@ -146,6 +156,7 @@ export default function ReportsPage() {
 
       {historyFor != null && <CustomerHistory id={historyFor} onClose={() => setHistoryFor(null)} />}
     </div>
+    </CsvAllowedContext.Provider>
   );
 }
 
@@ -542,7 +553,11 @@ const itemColumns: Col<ItemRow>[] = [
   },
 ];
 
-function SalesByItem({ params }: { params: ReportRange }) {
+// Cost and margin are for managers and admins; the API blanks them for
+// sales staff and the columns are hidden.
+const COST_KEYS = ['cost', 'm', 'mp'];
+
+function SalesByItem({ params, showCost = true }: { params: ReportRange; showCost?: boolean }) {
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   useEffect(() => { const t = setTimeout(() => setQ(search.trim()), 400); return () => clearTimeout(t); }, [search]);
@@ -560,11 +575,11 @@ function SalesByItem({ params }: { params: ReportRange }) {
               title={`${int(data.items.length)} products`}
               csvName={`sales-by-item-${params.from}-to-${params.to}.csv`}
               rows={data.items}
-              columns={itemColumns}
+              columns={showCost ? itemColumns : itemColumns.filter((c) => !COST_KEYS.includes(c.key))}
               maxHeight={620}
             />
             <Note>
-              Margin uses the cost price at the time of sale; products with no cost show a dash.
+              {showCost && 'Margin uses the cost price at the time of sale; products with no cost show a dash.'}
               {data.unitemised.lines > 0 &&
                 ` ${int(data.unitemised.lines)} lines from old imported invoices (${money(data.unitemised.revenue)}) have no product code and aren't itemised.`}
               {' '}Showing up to 2,000 products, highest revenue first. Click a column to sort.
@@ -757,25 +772,54 @@ const fmtTime = (t: string): string => {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`;
 };
 
+// The Backorders filters survive opening an order and pressing Back
+// (Sally, 16 Oct 2026) — kept for this browser tab only.
+const BO_FILTERS_KEY = 'pos_backorders_filters';
+type BoFilters = {
+  supplier?: string; from?: string; to?: string; fromTime?: string; toTime?: string;
+  query?: string; poState?: 'all' | 'open' | 'ordered';
+};
+function loadBoFilters(): BoFilters {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(BO_FILTERS_KEY) || '{}');
+    return v && typeof v === 'object' ? v : {};
+  } catch {
+    return {};
+  }
+}
+
 // readOnly: sales staff can see backorders but not raise / mark purchase
-// orders (Sally, 15 Oct 2026).
+// orders or export them (Sally, 15 + 16 Oct 2026).
 function Backorders({ readOnly = false }: { readOnly?: boolean }) {
   const { data, loading, error, reload } = useReport<{ suppliers: BoGroup[]; totals: any }>(() => reportsApi.backorders(), []);
   const navigate = useNavigate();
-  const [supplier, setSupplier] = useState('all');
+  const [saved] = useState(loadBoFilters);
+  const [supplier, setSupplier] = useState(saved.supplier || 'all');
   // Ordered date + time filter (Sally, 8 Oct 2026: "Can we filter by
   // Date"; 12 Oct: "also have a filter of 'time' like we have with
   // 'date'"). A time applies to its date, so it needs a date first.
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [fromTime, setFromTime] = useState('');
-  const [toTime, setToTime] = useState('');
+  const [from, setFrom] = useState(saved.from || '');
+  const [to, setTo] = useState(saved.to || '');
+  const [fromTime, setFromTime] = useState(saved.fromTime || '');
+  const [toTime, setToTime] = useState(saved.toTime || '');
   const fromMs = from ? boundary(from, fromTime, false) : null;
   const toMs = to ? boundary(to, toTime, true) : null;
   // Search (PO number, order, customer, SKU…) and ordered / not ordered
   // (Sally, 15 Oct 2026: "a search bar ... enter the purchase order number").
-  const [query, setQuery] = useState('');
-  const [poState, setPoState] = useState<'all' | 'open' | 'ordered'>('all');
+  const [query, setQuery] = useState(saved.query || '');
+  const [poState, setPoState] = useState<'all' | 'open' | 'ordered'>(
+    saved.poState === 'open' || saved.poState === 'ordered' ? saved.poState : 'all',
+  );
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        BO_FILTERS_KEY,
+        JSON.stringify({ supplier, from, to, fromTime, toTime, query, poState } as BoFilters),
+      );
+    } catch {
+      // storage blocked — filters just won't be remembered
+    }
+  }, [supplier, from, to, fromTime, toTime, query, poState]);
   const filtered = !!(from || to || query.trim() || poState !== 'all');
   const [printing, setPrinting] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -865,7 +909,11 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
           type="button"
           className="text-primary-400 font-semibold hover:underline whitespace-nowrap"
           title="Open this order"
-          onClick={() => navigate('/orders', { state: { openOrderId: r.orderId } })}
+          onClick={() =>
+            navigate('/orders', {
+              state: { openOrderId: r.orderId, returnTo: { path: '/reports', tab: 'backorders' } },
+            })
+          }
         >
           {r.orderNumber}
         </button>
@@ -1053,7 +1101,9 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
                 Clear filters
               </button>
             )}
-            <button className="btn-secondary" onClick={exportAll} disabled={!groups.length}>Export CSV</button>
+            {!readOnly && (
+              <button className="btn-secondary" onClick={exportAll} disabled={!groups.length}>Export CSV</button>
+            )}
             <button className="btn-secondary" onClick={() => setPrinting(true)} disabled={!groups.length}>Print</button>
             <button className="btn-secondary" onClick={reload}>Refresh</button>
           </div>

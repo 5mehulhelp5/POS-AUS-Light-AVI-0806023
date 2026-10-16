@@ -43,6 +43,13 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     isLaybyHeld: !!it.isLaybyHeld,
     refundedQty: refundedQtyByItem[it.id] || 0,
   }));
+  // Website orders carry no POS payment rows — Magento took the money.
+  // Paid on the website prints as one WEBSITE payment (view-only orders,
+  // Sally 16 Oct 2026).
+  const isWeb = o.source === 'magento';
+  if (isWeb && !(o.payments || []).length && ['paid', 'refunded'].includes(o.paymentStatus)) {
+    o = { ...o, payments: [{ method: 'website', amount: parseFloat(o.grandTotal), createdAt: o.createdAt }] };
+  }
   const firstPayment = (o.payments || [])[0];
   // Store credit consumed by this order — shown as CREDIT APPLIED and
   // subtracted from the printed BALANCE (a credit-covered exchange must
@@ -74,7 +81,7 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     buyerType: cust?.isTrade ? 'retail' : 'customer',
     customerName: cust
       ? [cust.firstName, cust.lastName].filter(Boolean).join(' ')
-      : undefined,
+      : o.customerNameSnapshot || undefined,
     customerCompany: cust?.companyName || cust?.company || undefined,
     customerEmail: cust?.email || undefined,
     customerPhone: cust?.phone || cust?.mobile || undefined,
@@ -90,7 +97,7 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     deliveryFee: o.deliveryFee != null ? parseFloat(o.deliveryFee) : 0,
     deliveryType: o.deliveryType || undefined,
     paymentMethod: firstPayment?.method || 'eftpos',
-    salesPerson: userName,
+    salesPerson: isWeb ? 'Website' : userName,
     notes: o.notes || undefined,
     totalRefunded: totalRefunded > 0 ? Math.round(totalRefunded * 100) / 100 : undefined,
     creditApplied:

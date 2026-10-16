@@ -18,7 +18,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 type RangeParams = { from: string; to: string; channel?: string; groupBy?: string };
 
 // Reports are commercially sensitive (costs, margins) — managers and
-// admins only, as before.
+// admins only, except the endpoints that name sales staff below.
 @ApiTags('reports')
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -28,7 +28,11 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   // ---- Sales summary by period, compared with the prior period
+  // Sales staff can see Sales Summary, Sales by Item and Sales by Staff
+  // (Sally, 16 Oct 2026) — without cost or margin, and the CSV buttons are
+  // hidden for them on screen.
   @Get('summary')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
   @ApiOperation({ summary: 'Sales summary for a range vs the previous range of equal length' })
   async summary(@Query() q: RangeParams & { tradeOnly?: string }) {
     return { success: true, data: await this.reportsService.salesSummary({ ...q, tradeOnly: q.tradeOnly === 'true' }) };
@@ -76,12 +80,19 @@ export class ReportsController {
 
   // ---- Sales by item / SKU
   @Get('items')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
   @ApiOperation({ summary: 'Units, revenue and margin per product' })
-  async items(@Query() q: RangeParams & { search?: string; tradeOnly?: string; limit?: string }) {
-    return {
-      success: true,
-      data: await this.reportsService.salesByItem({ ...q, tradeOnly: q.tradeOnly === 'true', limit: Number(q.limit) || undefined }),
-    };
+  async items(
+    @Query() q: RangeParams & { search?: string; tradeOnly?: string; limit?: string },
+    @CurrentUser() user: any,
+  ) {
+    const data = await this.reportsService.salesByItem({ ...q, tradeOnly: q.tradeOnly === 'true', limit: Number(q.limit) || undefined });
+    const role = user?.role?.name;
+    if (role !== RoleNames.ADMIN && role !== RoleNames.MANAGER) {
+      // Cost and margin stay with managers and admins.
+      data.items = data.items.map((i: any) => ({ ...i, costExGst: null, marginExGst: null, marginPct: null }));
+    }
+    return { success: true, data };
   }
 
   // ---- Trade: summary + best customers + top products, trade sales only
@@ -98,6 +109,7 @@ export class ReportsController {
 
   // ---- Sales by employee
   @Get('staff')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
   @ApiOperation({ summary: 'Revenue, transactions and average sale per staff member' })
   async staff(@Query() q: RangeParams) {
     return { success: true, data: await this.reportsService.salesByStaff(q) };

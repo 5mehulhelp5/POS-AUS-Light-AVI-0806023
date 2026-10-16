@@ -1,5 +1,11 @@
-import { ReactNode, useMemo, useState } from 'react';
+import { ReactNode, createContext, useContext, useMemo, useState } from 'react';
 import { ArrowDownTrayIcon, PrinterIcon, XMarkIcon } from '@heroicons/react/24/outline';
+
+// Whether this user may download report CSVs. Sales staff can view some
+// reports but not export them (Sally, 16 Oct 2026: "no access to
+// downloading a 'CSV'"). Set once by the Reports page.
+export const CsvAllowedContext = createContext(true);
+export const useCsvAllowed = () => useContext(CsvAllowedContext);
 
 // ------------------------------------------------------------ formatting
 export const money = (v: number | null | undefined, cents = true): string =>
@@ -178,6 +184,7 @@ export function DataTable<T>({
   maxHeight?: number;
   initialSort?: { key: string; dir: 'asc' | 'desc' };
 }) {
+  const csvAllowed = useCsvAllowed();
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(initialSort || null);
   const sorted = useMemo(() => {
     if (!sort) return rows;
@@ -194,10 +201,10 @@ export function DataTable<T>({
   }, [rows, sort, columns]);
   return (
     <div className="card overflow-hidden">
-      {(title || csvName) && (
+      {(title || (csvName && csvAllowed)) && (
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-700">
           <div className="font-semibold">{title}</div>
-          {csvName && rows.length > 0 && (
+          {csvName && csvAllowed && rows.length > 0 && (
             <button
               className="btn-secondary text-xs py-1 flex items-center gap-1"
               onClick={() =>

@@ -75,6 +75,40 @@ export class SyncController {
     };
   }
 
+  // Website orders brought into the POS every 15 minutes, view-only
+  // (Sally, 16 Oct 2026). Managers can see it; only admins can change it.
+  @Get('website-orders')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER)
+  @ApiOperation({ summary: 'Website order import: on/off, last run, progress' })
+  async getWebsiteOrders() {
+    return { success: true, data: await this.syncService.getWebsiteOrderImportState() };
+  }
+
+  @Put('website-orders')
+  @Roles(RoleNames.ADMIN)
+  @ApiOperation({ summary: 'Switch the 15-minute website order import on or off' })
+  async setWebsiteOrders(@Body() body: { enabled?: boolean }, @CurrentUser() user: any) {
+    const state = await this.syncService.setWebsiteOrderImportEnabled(body?.enabled !== false, user?.id);
+    return {
+      success: true,
+      message: state.enabled
+        ? 'New website orders will come across every 15 minutes'
+        : 'Website order import switched off',
+      data: await this.syncService.getWebsiteOrderImportState(),
+    };
+  }
+
+  @Post('website-orders/import')
+  @Roles(RoleNames.ADMIN)
+  @ApiOperation({ summary: 'Bring new website orders across now (runs in background)' })
+  importWebsiteOrders() {
+    this.syncService.importWebsiteOrders().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[importWebsiteOrders] threw:', err);
+    });
+    return { success: true, message: 'Reading new website orders from Magento…' };
+  }
+
   @Get('test-connection')
   @Roles(RoleNames.ADMIN)
   @ApiOperation({ summary: 'Test Magento connection' })

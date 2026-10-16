@@ -37,9 +37,10 @@ const managerNavItems = [
   { to: '/reports', label: 'Reports', icon: ChartBarIcon },
 ];
 
-// Sales staff get the Backorders report only, read-only (Sally, 15 Oct 2026).
+// Sales staff get Sales Summary, Sales by Item, Sales by Staff and a
+// read-only Backorders (Sally, 15 + 16 Oct 2026).
 const staffNavItems = [
-  { to: '/reports', label: 'Backorders', icon: ChartBarIcon },
+  { to: '/reports', label: 'Reports', icon: ChartBarIcon },
 ];
 
 const adminNavItems = [

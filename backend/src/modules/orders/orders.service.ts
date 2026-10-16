@@ -1155,13 +1155,44 @@ export class OrdersService {
    * Link a customer to an existing order. Used to attach a buyer to a
    * walk-in order so staff can issue store credit on a refund.
    */
-  async linkCustomer(orderId: number, customerId: number): Promise<Order> {
+  // Website (Magento) orders are view-only in the POS (Sally, 16 Oct 2026:
+  // "Website sales can only be viewed and make no changes to invoice").
+  // Every endpoint that changes an order calls this first.
+  async assertEditable(orderId: number): Promise<void> {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      select: { id: true, source: true },
+    });
+    if (order?.source === OrderSource.MAGENTO) {
+      throw new BadRequestException(
+        'Website orders are view-only in the POS — make any changes in Magento',
+      );
+    }
+  }
+
+  async linkCustomer(orderId: number, customerId: number, userId?: number): Promise<Order> {
     const order = await this.orderRepository.findOne({ where: { id: orderId } });
     if (!order) {
       throw new BadRequestException('Order not found');
     }
+    const customer = await this.customerRepository.findOne({ where: { id: customerId } });
+    if (!customer) {
+      throw new BadRequestException('Customer not found');
+    }
+    const previous = order.customerId;
     order.customerId = customerId;
     await this.orderRepository.save(order);
+    if (previous !== customerId) {
+      const name = [customer.firstName, customer.lastName].filter(Boolean).join(' ') || `#${customerId}`;
+      await this.orderEventRepository.save(
+        this.orderEventRepository.create({
+          orderId,
+          userId: userId ?? null,
+          type: 'customer_linked',
+          description: `Customer ${name} linked to the order.`,
+        }),
+      );
+    }
     return (await this.findById(orderId)) as Order;
   }
 

@@ -22,6 +22,7 @@ import {
   NoSymbolIcon,
 } from '@heroicons/react/24/outline';
 import { formatPhone } from '../../utils/phone';
+import { posImage } from '../../utils/imageUrl';
 
 interface Quote {
   id: number;
@@ -102,6 +103,7 @@ export default function QuotesPage() {
   const [custSearchPhone, setCustSearchPhone] = useState('');
   const [productSearch, setProductSearch] = useState('');
   const [productResults, setProductResults] = useState<any[]>([]);
+  const [productSearching, setProductSearching] = useState(false);
   const [lineItems, setLineItems] = useState<QuoteLineItem[]>([]);
   // Bumped to re-run the trade preview without a product-set change
   // (reset price, or product prices loaded for an edited quote).
@@ -335,21 +337,50 @@ export default function QuotesPage() {
     return () => clearTimeout(timer);
   }, [customerSearch]);
 
-  // Product search for create modal
+  // Product search for create modal. Results show as picture cards like
+  // the Products screen (Sally, 16 Oct 2026: staff are visual and the
+  // AQL-155 options all read alike). A configurable "parent" is $0 in the
+  // POS — the price is on each colour / size — so it's left out and its
+  // options are shown instead (Sally, 16 Oct 2026: "the first one is $0,
+  // it's confusing the hell out of them").
   useEffect(() => {
-    if (productSearch.length < 2) {
+    const term = productSearch.trim();
+    if (term.length < 2) {
       setProductResults([]);
+      setProductSearching(false);
       return;
     }
+    let cancelled = false;
+    setProductSearching(true);
     const timer = setTimeout(async () => {
       try {
-        const response = await productsApi.getProducts({ search: productSearch, limit: 5 });
-        setProductResults(response.data.data?.products || []);
+        const response = await productsApi.getProducts({ search: term, limit: 24 });
+        const found: any[] = response.data.data?.products || [];
+        const isParent = (p: any) => p.productType === 'configurable';
+        let list = found.filter((p) => !isParent(p));
+        // A parent matched but none of its options did (e.g. searched by
+        // the parent's name): fetch the options — their SKUs start with
+        // the parent's SKU.
+        for (const parent of found.filter(isParent).slice(0, 3)) {
+          const prefix = String(parent.sku || '').toLowerCase();
+          if (!prefix || list.some((p) => String(p.sku || '').toLowerCase().startsWith(prefix))) continue;
+          const r = await productsApi.getProducts({ search: parent.sku, limit: 24 });
+          const options = ((r.data.data?.products || []) as any[]).filter(
+            (p) => !isParent(p) && String(p.sku || '').toLowerCase().startsWith(prefix),
+          );
+          list = [...list, ...options.filter((o) => !list.some((x) => x.id === o.id))];
+        }
+        if (!cancelled) setProductResults(list.slice(0, 24));
       } catch {
-        setProductResults([]);
+        if (!cancelled) setProductResults([]);
+      } finally {
+        if (!cancelled) setProductSearching(false);
       }
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [productSearch]);
 
   const addLineItem = (product: any) => {
@@ -1525,36 +1556,75 @@ export default function QuotesPage() {
                   />
                 </div>
               </div>
-              {productResults.length > 0 && (
-                <div className="bg-pos-accent border border-gray-600 rounded-lg max-h-48 overflow-auto">
-                  {productResults.map((p: any) => {
-                    const onSale = isProductOnSale(p);
-                    const price = effectiveProductPrice(p);
-                    return (
-                    <button
-                      key={p.id}
-                      className="w-full text-left px-4 py-3 hover:bg-pos-card border-b border-gray-700 last:border-0"
-                      onClick={() => addLineItem(p)}
-                    >
-                      <div className="flex justify-between">
-                        <div>
-                          <p className="font-medium">{p.name}</p>
-                          <p className="text-xs text-gray-400">ID: {p.id} | {p.sku}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-primary-400 font-bold">
-                            ${price.toFixed(2)}
-                          </p>
-                          {onSale && (
-                            <p className="text-xs text-gray-500 line-through">
-                              ${Number(p.price).toFixed(2)}
+              {productSearch.trim().length >= 2 && (
+                <div className="bg-pos-accent border border-gray-600 rounded-lg p-2 max-h-[26rem] overflow-auto">
+                  {productResults.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-gray-400">
+                      {productSearching ? 'Searching…' : `No products match "${productSearch.trim()}"`}
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
+                      {productResults.map((p: any) => {
+                        const onSale = isProductOnSale(p);
+                        const price = effectiveProductPrice(p);
+                        const added = lineItems.some((li) => li.productId === p.id);
+                        const img = posImage(p.thumbnailUrl || p.imageUrl);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            disabled={added}
+                            className={`text-left rounded-lg border p-2 bg-pos-card transition-colors ${
+                              added
+                                ? 'border-green-500/60 opacity-70 cursor-default'
+                                : 'border-gray-700 hover:border-primary-500'
+                            }`}
+                            title={added ? 'Already on this quote' : 'Add to the quote'}
+                            onClick={() => addLineItem(p)}
+                          >
+                            <div className="h-28 bg-pos-accent rounded mb-2 overflow-hidden relative flex items-center justify-center">
+                              {img ? (
+                                <img
+                                  src={img}
+                                  alt={p.name}
+                                  loading="lazy"
+                                  className="w-full h-full object-contain p-1"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <span className="text-xs text-gray-500">No image</span>
+                              )}
+                              {onSale && (
+                                <span className="absolute top-1 right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                  SALE
+                                </span>
+                              )}
+                              {added && (
+                                <span className="absolute top-1 left-1 bg-green-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                  ADDED
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-gray-400 font-mono truncate">{p.sku}</p>
+                            <p className="text-sm font-medium leading-snug line-clamp-2">{p.name}</p>
+                            <div className="flex items-baseline gap-2 mt-1">
+                              <span className="text-primary-400 font-bold">${price.toFixed(2)}</span>
+                              {onSale && (
+                                <span className="text-xs text-gray-500 line-through">
+                                  ${Number(p.price).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-gray-500">
+                              ID {p.id} · Stock {p.stockQty ?? 0}
                             </p>
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                    );
-                  })}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
