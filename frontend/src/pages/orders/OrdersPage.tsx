@@ -1358,8 +1358,7 @@ export default function OrdersPage() {
                       )}
                       {!c && isWebOrder(selectedOrder) && (
                         <div className="text-gray-400 md:col-span-2 whitespace-pre-wrap">
-                          {(selectedOrder.internalNotes || '').split('
-')[0] || 'Website guest checkout.'}
+                          {(selectedOrder.internalNotes || '').split(/\r?\n/)[0] || 'Website guest checkout.'}
                         </div>
                       )}
                       {!c && !isWebOrder(selectedOrder) && (
