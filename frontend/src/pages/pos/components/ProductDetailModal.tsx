@@ -288,12 +288,20 @@ export default function ProductDetailModal({
                   <span className="text-2xl font-bold text-primary-400">
                     ${Number(product.specialPrice).toFixed(2)}
                   </span>
-                  <span className="text-gray-500 line-through">
-                    ${Number(product.price).toFixed(2)}
-                  </span>
-                  <span className="px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded">
-                    SALE
-                  </span>
+                  {(product as any).everydayPrice ? (
+                    // Eglo / Havit: shown like the website, "RRP" and no
+                    // SALE tag (Sally, 17 Oct 2026).
+                    <span className="text-gray-500">RRP ${Number(product.price).toFixed(2)}</span>
+                  ) : (
+                    <>
+                      <span className="text-gray-500 line-through">
+                        ${Number(product.price).toFixed(2)}
+                      </span>
+                      <span className="px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded">
+                        SALE
+                      </span>
+                    </>
+                  )}
                 </>
               ) : (
                 <>
@@ -783,7 +791,7 @@ export default function ProductDetailModal({
           <div className="m-auto flex flex-col items-center gap-4">
             <div
               className="shadow-lg"
-              dangerouslySetInnerHTML={{ __html: saleTicketHtml(product, onSale) }}
+              dangerouslySetInnerHTML={{ __html: saleTicketHtml(product, onSale, !!(product as any).everydayPrice) }}
             />
 
             <p className="text-xs text-gray-400">
@@ -799,7 +807,7 @@ export default function ProductDetailModal({
               </button>
               <button
                 className="btn-primary flex-1 flex items-center justify-center gap-2"
-                onClick={() => printSaleTicket(product, onSale)}
+                onClick={() => printSaleTicket(product, onSale, !!(product as any).everydayPrice)}
               >
                 <PrinterIcon className="h-5 w-5" />
                 Print
@@ -825,7 +833,8 @@ type TicketProduct = {
 // sku top left corner and price then can be bigger" — SKU top-left, the
 // name under it (2 lines max), and the price across the full width as big
 // as it fits.
-function saleTicketHtml(p: TicketProduct, onSale: boolean): string {
+// rrp: Eglo / Havit — the full price is printed as "RRP", not SALE.
+function saleTicketHtml(p: TicketProduct, onSale: boolean, rrp = false): string {
   const shown = Number(onSale ? p.specialPrice : p.price);
   const text = `$${shown.toFixed(2)}`;
   const was = `$${Number(p.price).toFixed(2)}`;
@@ -838,12 +847,17 @@ function saleTicketHtml(p: TicketProduct, onSale: boolean): string {
   const availMm = 83 - saleMm - 1.5;
   const perPt = textWidthMm(text, 'bold {size} Arial, Helvetica, sans-serif', 1) * 0.98; // letter-spacing -0.02em
   const pt = Math.max(20, Math.floor(Math.min(56, availMm / perPt)));
-  const sale = onSale
-    ? `<div style="text-align:right;padding-bottom:1.6mm;white-space:nowrap">
-         <div style="font-size:10pt;color:#333;text-decoration:line-through">${was}</div>
-         <div style="font-size:10pt;font-weight:700;letter-spacing:0.12em">SALE</div>
-       </div>`
-    : '';
+  const sale = !onSale
+    ? ''
+    : rrp
+      ? `<div style="text-align:right;padding-bottom:1.6mm;white-space:nowrap">
+           <div style="font-size:8pt;color:#333;letter-spacing:0.12em">RRP</div>
+           <div style="font-size:10pt;color:#333">${was}</div>
+         </div>`
+      : `<div style="text-align:right;padding-bottom:1.6mm;white-space:nowrap">
+           <div style="font-size:10pt;color:#333;text-decoration:line-through">${was}</div>
+           <div style="font-size:10pt;font-weight:700;letter-spacing:0.12em">SALE</div>
+         </div>`;
   return `<div style="width:89mm;height:36mm;box-sizing:border-box;padding:2mm 3mm;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;overflow:hidden">
     <div style="font-family:'Courier New',monospace;font-weight:700;font-size:8.5pt;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(p.sku)}</div>
     <div style="font-weight:700;font-size:9.5pt;line-height:1.15;margin-top:0.8mm;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escHtml(p.name)}</div>
@@ -854,6 +868,6 @@ function saleTicketHtml(p: TicketProduct, onSale: boolean): string {
   </div>`;
 }
 
-function printSaleTicket(p: TicketProduct, onSale: boolean) {
-  printTicketHtml(p.sku, saleTicketHtml(p, onSale));
+function printSaleTicket(p: TicketProduct, onSale: boolean, rrp = false) {
+  printTicketHtml(p.sku, saleTicketHtml(p, onSale, rrp));
 }

@@ -98,6 +98,7 @@ export class OrdersController {
           itemCount: o.items.length,
           createdAt: o.createdAt,
           source: o.source,
+          voidedAt: o.voidedAt || null,
           legacyFile: o.legacyFile || null,
           orderType: o.orderType,
           laybyExpiresAt: o.laybyExpiresAt,
@@ -498,6 +499,21 @@ export class OrdersController {
     await this.ordersService.assertEditable(id);
     const order = await this.ordersService.setItemStatus(id, itemId, status, user.id);
     return { success: true, data: { order } };
+  }
+
+  // Void a sale put through by mistake (duplicates) — admins only (Sally,
+  // 17 Oct 2026). Not a refund: the sale drops out of the reports.
+  @Post(':id/void')
+  @UseGuards(RolesGuard)
+  @Roles(RoleNames.ADMIN)
+  @ApiOperation({ summary: 'Void a sale (admin) — cancelled, out of the reports, stock back' })
+  async voidOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { reason?: string },
+    @CurrentUser() user: any,
+  ) {
+    const order = await this.ordersService.voidOrder(id, String(body?.reason || ''), user.id);
+    return { success: true, data: { order: { id: order.id, status: order.status, voidedAt: order.voidedAt } } };
   }
 
   // Website orders: put a line (or part of it) on back order, or mark that

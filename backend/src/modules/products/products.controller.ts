@@ -183,7 +183,9 @@ export class ProductsController {
           specialPriceTo: p.specialPriceTo,
           // Special-price window OR Sale/Clearance category membership
           // (Coolum-style "Sale" tags without a special price).
-          isOnSale: p.isOnSale || p.isInSaleCategory,
+          isOnSale: p.countsAsSale,
+          // Eglo / Havit: special price is the everyday price — no SALE tag.
+          everydayPrice: p.isEverydayPriceBrand,
           effectivePrice: p.effectivePrice,
           // Cost — manager/admin only. Used by the cart to warn when a
           // sale drops the unit price below cost+30% (the minimum margin
@@ -683,7 +685,8 @@ export class ProductsController {
           brand: product.brand || null,
           specialPriceFrom: product.specialPriceFrom,
           specialPriceTo: product.specialPriceTo,
-          isOnSale: product.isOnSale || product.isInSaleCategory,
+          isOnSale: product.countsAsSale,
+          everydayPrice: product.isEverydayPriceBrand,
           effectivePrice: product.effectivePrice,
           stockQty: product.stockQty,
           isInStock: product.isInStock,

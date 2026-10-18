@@ -1161,13 +1161,105 @@ export class OrdersService {
   async assertEditable(orderId: number): Promise<void> {
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
-      select: { id: true, source: true },
+      select: { id: true, source: true, voidedAt: true },
     });
     if (order?.source === OrderSource.MAGENTO) {
       throw new BadRequestException(
         'Website orders are view-only in the POS — make any changes in Magento',
       );
     }
+    if (order?.voidedAt) {
+      throw new BadRequestException('This sale was voided — it can no longer be changed');
+    }
+  }
+
+  // Void a sale put through by mistake, e.g. twice (Sally, 17 Oct 2026:
+  // "a void button where we can just clear any duplicates ... so that way
+  // it's not added on to the sales reports or back orders"). Admin only.
+  // The order is cancelled (every report and the Backorders list already
+  // leave cancelled orders out, and End of Day leaves out its payments),
+  // the stock it took goes back on the shelf, and who / why is kept on
+  // the order and in its history. Money is NOT moved: if the customer was
+  // charged, reverse it on the EFTPOS terminal / give the cash back.
+  async voidOrder(orderId: number, reason: string, userId: number): Promise<Order> {
+    const why = (reason || '').trim();
+    if (why.length < 3) throw new BadRequestException('Say why the sale is being voided');
+    return this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id: orderId },
+        relations: ['items', 'payments'],
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new BadRequestException('Order not found');
+      if (order.voidedAt) throw new BadRequestException('This sale is already voided');
+      if (order.source !== OrderSource.POS) {
+        throw new BadRequestException('Only POS sales can be voided');
+      }
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new BadRequestException('This order is already cancelled');
+      }
+      const refunds = await manager.query(`SELECT COUNT(*) n FROM refunds WHERE order_id = ?`, [orderId]);
+      if (Number(refunds?.[0]?.n) > 0) {
+        throw new BadRequestException('This sale has a refund on it — it can\'t be voided');
+      }
+      if (order.exchangeFromOrderId) {
+        throw new BadRequestException('This sale is part of an exchange — it can\'t be voided');
+      }
+      const exchanged = await manager.count(Order, { where: { exchangeFromOrderId: orderId } });
+      if (exchanged > 0) {
+        throw new BadRequestException('Goods from this sale were exchanged — it can\'t be voided');
+      }
+      if ((order.payments || []).some((p) => p.method === PaymentMethod.STORE_CREDIT)) {
+        throw new BadRequestException('This sale used store credit — refund it instead so the credit goes back');
+      }
+
+      // Back on the shelf: what the sale took off. Back-order lines only
+      // took stock if they were marked received.
+      for (const item of order.items || []) {
+        if (!item.productId) continue;
+        const took = !item.isBackorder || !!item.backorderFulfilledAt;
+        if (took && item.quantity > 0) {
+          await manager.update(
+            'products',
+            { id: item.productId },
+            {
+              stockQty: () => `stock_qty + ${Number(item.quantity)}`,
+              isInStock: () => `CASE WHEN stock_qty + ${Number(item.quantity)} > 0 THEN 1 ELSE 0 END`,
+            },
+          );
+        }
+      }
+
+      const editor = await manager.findOne(User, {
+        where: { id: userId },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      const who = editor ? [editor.firstName, editor.lastName].filter(Boolean).join(' ') : `user #${userId}`;
+      const paid = (order.payments || [])
+        .filter((p) => p.status === PaymentEntityStatus.COMPLETED)
+        .reduce((s, p) => s + Number(p.amount || 0), 0);
+
+      await manager.update(Order, { id: orderId }, {
+        status: OrderStatus.CANCELLED,
+        voidedAt: new Date(),
+        voidedBy: userId,
+        voidedByName: who.slice(0, 120),
+        voidReason: why.slice(0, 2000),
+      });
+      await manager.save(
+        manager.create(OrderEvent, {
+          orderId,
+          userId,
+          type: 'voided',
+          description:
+            `Sale voided by ${who}: ${why}` +
+            (paid > 0.005 ? ` ($${paid.toFixed(2)} had been taken — not refunded by the POS).` : '.'),
+        }),
+      );
+      // eslint-disable-next-line no-console
+      console.log(`[orders.voidOrder] order=${order.orderNumber} by userId=${userId} reason=${JSON.stringify(why)}`);
+      return (await manager.findOne(Order, { where: { id: orderId } })) as Order;
+    });
   }
 
   // Website orders stay view-only, except that purchasing can put a line

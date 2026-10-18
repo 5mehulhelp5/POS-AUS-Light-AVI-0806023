@@ -3,6 +3,7 @@ import { fmtPct } from '../../../utils/pricingConfig';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import {
   isProductOnSale,
+  showsSaleTag,
   effectiveProductPrice,
   tradeNetPrice,
   TradeInfo,
@@ -65,7 +66,7 @@ export default function ProductGrid({
           // Coolum). Strike-through pricing only when a real special
           // price exists; category-sale items show their normal price.
           const priceSale = isProductOnSale(product);
-          const onSale = priceSale || (product as any).isOnSale === true;
+          const onSale = showsSaleTag(product);
           // Trade price: the rule's % off the sale price when the rule
           // says so (all default rules since 8 Oct 2026), else off the
           // fixed retail. Customer-price-wins: when the sale price still

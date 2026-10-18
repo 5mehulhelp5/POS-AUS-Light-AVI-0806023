@@ -62,6 +62,15 @@ export function isProductOnSale(p: {
   return true;
 }
 
+// Whether the SALE tag shows: an active special price or the server's
+// sale flag (Sale / Clearance category) — except Eglo and Havit, whose
+// special price is their everyday price, so only the server's flag
+// (clearance) counts (Sally, 17 Oct 2026). Prices are unaffected.
+export function showsSaleTag(p: any): boolean {
+  if (p?.everydayPrice) return p.isOnSale === true;
+  return isProductOnSale(p) || p?.isOnSale === true;
+}
+
 export function effectiveProductPrice(p: {
   price: number | string | null | undefined;
   specialPrice: number | string | null | undefined;

@@ -40,6 +40,7 @@ interface InvoiceData {
   buyerType: 'retail' | 'customer';
   customerName?: string;
   customerCompany?: string;
+  voided?: boolean;
   customerEmail?: string;
   customerPhone?: string;
   customerAddress?: string;
@@ -357,6 +358,11 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
               <div style={{ marginTop: '6px', border: `1px solid ${INK}`, padding: '10px 14px', fontSize: '22px', fontWeight: 800 }}>
                 {invoice.orderNumber}
               </div>
+              {invoice.voided && (
+                <div style={{ marginTop: '6px', color: '#b91c1c', fontSize: '18px', fontWeight: 800, letterSpacing: '3px' }}>
+                  VOID
+                </div>
+              )}
             </div>
           </div>
 

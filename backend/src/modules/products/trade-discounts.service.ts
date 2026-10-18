@@ -164,8 +164,9 @@ export class TradeDiscountsService {
     }
     // "Excluding the ones already on sale and clearance": same test as the
     // SALE tag staff see on the product (special price active, or in a
-    // Sale / Clearance category).
-    if (product.isOnSale || product.isInSaleCategory || this.isClearanceProduct(product)) {
+    // Sale / Clearance category; Eglo and Havit only when in clearance —
+    // their special price is their everyday price, Sally 17 Oct 2026).
+    if (product.countsAsSale) {
       return { percent: 0, label: null, reason: 'sale' };
     }
     const label = `${promo.label} ${promo.percent}% off`;

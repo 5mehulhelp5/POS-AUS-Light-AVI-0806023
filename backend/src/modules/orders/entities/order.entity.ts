@@ -189,6 +189,21 @@ export class Order {
   @Column({ name: 'internal_notes', type: 'text', nullable: true })
   internalNotes: string | null;
 
+  // Voided by an admin (Sally, 17 Oct 2026: duplicate sales). A voided
+  // sale is cancelled and left out of sales, takings and back orders —
+  // unlike a refund, nothing is recorded against the reports.
+  @Column({ name: 'voided_at', type: 'timestamp', nullable: true })
+  voidedAt: Date | null;
+
+  @Column({ name: 'voided_by', type: 'int', unsigned: true, nullable: true })
+  voidedBy: number | null;
+
+  @Column({ name: 'voided_by_name', type: 'varchar', length: 120, nullable: true })
+  voidedByName: string | null;
+
+  @Column({ name: 'void_reason', type: 'text', nullable: true })
+  voidReason: string | null;
+
   // Snapshot of the customer name at order time. Populated for walk-in
   // orders (no customer FK) so the orders list can still show a name
   // instead of just "Walk-in". Ignored when customerId is set — the

@@ -5,6 +5,7 @@ import { quotesApi, customersApi, productsApi, settingsApi } from '../../service
 import { useMinMarginPercent, fmtPct } from '../../utils/pricingConfig';
 import {
   isProductOnSale,
+  showsSaleTag,
   effectiveProductPrice,
 } from '../../store/slices/productsSlice';
 import {
@@ -1596,7 +1597,7 @@ export default function QuotesPage() {
                               ) : (
                                 <span className="text-xs text-gray-500">No image</span>
                               )}
-                              {onSale && (
+                              {showsSaleTag(p) && (
                                 <span className="absolute top-1 right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
                                   SALE
                                 </span>

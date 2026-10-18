@@ -242,7 +242,7 @@ export class ReportsService {
     const payments = await this.dataSource.query(
       `SELECT pm.method, COUNT(*) count, SUM(pm.amount) amount
          FROM payments pm JOIN orders o ON o.id = pm.order_id
-        WHERE pm.status = 'completed' AND o.source = 'pos' AND ${win('pm.created_at')}
+        WHERE pm.status = 'completed' AND o.source = 'pos' AND o.voided_at IS NULL AND ${win('pm.created_at')}
         GROUP BY pm.method ORDER BY amount DESC`,
       p,
     );

@@ -587,7 +587,14 @@ export default function OrdersPage() {
     });
   };
 
-  const getStatusBadge = (status: string, hasExchange = false) => {
+  const getStatusBadge = (status: string, hasExchange = false, voided = false) => {
+    if (voided) {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium whitespace-nowrap bg-red-700 text-white" title="Voided sale — not counted anywhere">
+          VOID
+        </span>
+      );
+    }
     const colors: Record<string, string> = {
       complete: 'bg-green-600',
       pending: 'bg-yellow-600',
@@ -625,6 +632,36 @@ export default function OrdersPage() {
   // what's still owed. Payments come back on the order detail payload.
   // Website orders were paid in Magento — no POS payment rows.
   const isWebOrder = (o: any) => o?.source === 'magento';
+  // Nothing can be changed on a website order or a voided sale.
+  const isLocked = (o: any) => isWebOrder(o) || !!o?.voidedAt;
+  // Void a sale put through by mistake (Sally, 17 Oct 2026) — admins.
+  const isAdmin = user?.role.name === 'admin';
+  const [voidFor, setVoidFor] = useState<any>(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [voiding, setVoiding] = useState(false);
+  const canVoid = (o: any) =>
+    isAdmin && o?.source === 'pos' && !o?.voidedAt && o?.status !== 'cancelled' && !(o?.refunds || []).length;
+  const handleVoid = async () => {
+    if (!voidFor) return;
+    if (voidReason.trim().length < 3) {
+      toast.error('Say why the sale is being voided');
+      return;
+    }
+    setVoiding(true);
+    try {
+      await ordersApi.voidOrder(voidFor.id, voidReason.trim());
+      toast.success(`${voidFor.orderNumber} voided — it's out of the sales reports`);
+      const id = voidFor.id;
+      setVoidFor(null);
+      setVoidReason('');
+      await viewOrder(id);
+      fetchOrders();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Could not void the sale');
+    } finally {
+      setVoiding(false);
+    }
+  };
   const paidTotal = (o: any) =>
     isWebOrder(o) && !(o?.payments || []).length
       ? ['paid', 'refunded'].includes(o.paymentStatus)
@@ -1060,6 +1097,7 @@ export default function OrdersPage() {
                     {getStatusBadge(
                       order.status,
                       !!(order as any).hasExchange,
+                      !!(order as any).voidedAt,
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">{formatDate(order.createdAt)}</td>
@@ -1202,6 +1240,7 @@ export default function OrdersPage() {
                 {getStatusBadge(
                   selectedOrder.status,
                   (selectedOrder.exchangedToOrders || []).length > 0,
+                  !!selectedOrder.voidedAt,
                 )}
                 <h2 className="text-xl font-bold">Order {selectedOrder.orderNumber}</h2>
               </div>
@@ -1298,6 +1337,15 @@ export default function OrdersPage() {
                 </div>
               </div>
 
+              {selectedOrder.voidedAt && (
+                <div className="rounded-lg p-3 text-sm border border-red-500/50 bg-red-500/10 text-red-400">
+                  <span className="font-semibold">Voided</span>
+                  {selectedOrder.voidedByName ? ` by ${selectedOrder.voidedByName}` : ''} on{' '}
+                  {formatDate(selectedOrder.voidedAt)}
+                  {selectedOrder.voidReason ? ` — ${selectedOrder.voidReason}` : ''}. Not counted in sales,
+                  takings or back orders.
+                </div>
+              )}
               {isWebOrder(selectedOrder) && (
                 <div className="rounded-lg p-3 text-sm border border-blue-500/40 bg-blue-500/10 text-blue-300">
                   Website order {selectedOrder.magentoIncrementId ? `#${selectedOrder.magentoIncrementId} ` : ''}
@@ -1361,7 +1409,7 @@ export default function OrdersPage() {
                           {(selectedOrder.internalNotes || '').split(/\r?\n/)[0] || 'Website guest checkout.'}
                         </div>
                       )}
-                      {!c && !isWebOrder(selectedOrder) && (
+                      {!c && !isLocked(selectedOrder) && (
                         <div className="md:col-span-2 flex flex-wrap items-center gap-3">
                           <span className="text-gray-500 italic">
                             Walk-in — no customer attached to this order.
@@ -1614,7 +1662,7 @@ export default function OrdersPage() {
                 >
                   {isWebOrder(selectedOrder) ? 'Close' : 'Cancel'}
                 </button>
-                {!isWebOrder(selectedOrder) && (
+                {!isLocked(selectedOrder) && (
                 <button
                   className="btn-primary bg-green-600 hover:bg-green-700"
                   onClick={() => setEditItemsOrder(selectedOrder)}
@@ -1624,7 +1672,7 @@ export default function OrdersPage() {
                   Add Lights
                 </button>
                 )}
-                {canRefund && !isWebOrder(selectedOrder) && (
+                {canRefund && !isLocked(selectedOrder) && (
                   <button
                     className="btn-primary bg-cyan-600 hover:bg-cyan-700"
                     onClick={() => openRefundModal(selectedOrder)}
@@ -1634,7 +1682,7 @@ export default function OrdersPage() {
                     Refund Credits &amp; Exchange
                   </button>
                 )}
-                {canRefund && !isWebOrder(selectedOrder) && (
+                {canRefund && !isLocked(selectedOrder) && (
                   <button
                     className="btn-primary bg-orange-600 hover:bg-orange-700"
                     onClick={() => openRefundModal(selectedOrder)}
@@ -1660,6 +1708,19 @@ export default function OrdersPage() {
                     disabled={isTakingLaybyPayment}
                   >
                     Cancel Lay By
+                  </button>
+                )}
+                {canVoid(selectedOrder) && (
+                  <button
+                    className="btn-secondary border border-red-500/60 text-red-400 hover:bg-red-500/10"
+                    onClick={() => {
+                      setVoidReason('');
+                      setVoidFor(selectedOrder);
+                    }}
+                    disabled={isTakingLaybyPayment}
+                    title="Admin: void a sale put through by mistake (e.g. twice) — it drops out of the reports"
+                  >
+                    Void Sale
                   </button>
                 )}
               </div>
@@ -1809,7 +1870,7 @@ export default function OrdersPage() {
                               <span className="text-xs text-amber-400">{p.status}</span>
                             )}
                             <span className="ml-auto font-semibold">${Number(p.amount).toFixed(2)}</span>
-                            {canManage && p.method !== 'store_credit' && (
+                            {canManage && p.method !== 'store_credit' && !isLocked(selectedOrder) && (
                               <button
                                 className="text-xs text-primary-400 hover:underline"
                                 onClick={() =>
@@ -1840,7 +1901,7 @@ export default function OrdersPage() {
                   <p className="text-sm text-gray-400">
                     Customer note <span className="text-gray-600">(prints on invoice)</span>
                   </p>
-                  {notesDraft === null && !isWebOrder(selectedOrder) && (
+                  {notesDraft === null && !isLocked(selectedOrder) && (
                     <button
                       onClick={() =>
                         setNotesDraft(selectedOrder.notes || '')
@@ -2506,6 +2567,45 @@ export default function OrdersPage() {
                 refunds={refundOrder.refunds || []}
               />
             </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Void confirmation (admin). */}
+      {voidFor && (
+        <div className="modal-backdrop-top">
+          <div className="modal-content max-w-lg m-auto">
+            <h3 className="text-lg font-bold mb-2">Void {voidFor.orderNumber}?</h3>
+            <div className="text-sm text-gray-400 space-y-2 mb-4">
+              <p>
+                For a sale put through by mistake, e.g. twice. The sale is cancelled and left out of the sales
+                reports, End of Day takings and back orders, and its stock goes back on the shelf. It is not
+                recorded as a refund.
+              </p>
+              {paidTotal(voidFor) > 0.005 && (
+                <p className="text-amber-500">
+                  ${paidTotal(voidFor).toFixed(2)} was taken on this sale. The POS doesn't refund it — if the customer
+                  was really charged, reverse it on the EFTPOS terminal or give the cash back.
+                </p>
+              )}
+            </div>
+            <label className="block text-xs text-gray-400 mb-1">Reason (required)</label>
+            <input
+              className="input w-full mb-4"
+              value={voidReason}
+              maxLength={300}
+              placeholder="e.g. Duplicate of POS-0218"
+              autoFocus
+              onChange={(e) => setVoidReason(e.target.value)}
+            />
+            <div className="flex justify-end gap-3">
+              <button className="btn-secondary" onClick={() => setVoidFor(null)} disabled={voiding}>
+                Keep sale
+              </button>
+              <button className="btn-primary bg-red-600 hover:bg-red-700" onClick={handleVoid} disabled={voiding}>
+                {voiding ? 'Voiding…' : 'Void sale'}
+              </button>
             </div>
           </div>
         </div>

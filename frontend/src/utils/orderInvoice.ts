@@ -78,6 +78,8 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     : undefined;
   return {
     orderNumber: o.orderNumber,
+    // Voided sale (duplicate) — the reprint says so.
+    voided: !!o.voidedAt,
     date: o.createdAt,
     updatedAt: o.updatedAt,
     buyerType: cust?.isTrade ? 'retail' : 'customer',
