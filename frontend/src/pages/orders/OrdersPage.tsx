@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
@@ -127,6 +127,19 @@ export default function OrdersPage() {
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
+  // What's actually searched: the box after a short pause in typing (or
+  // straight away on Enter). Searching on every keystroke let the slow
+  // reply for "7" land after the one for "7000027808" and put the full
+  // list back (Sally, 19 Oct 2026).
+  const [query, setQuery] = useState('');
+  const latestFetch = useRef(0);
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => {
+    setPagination((p) => (p.page === 1 ? p : { ...p, page: 1 }));
+  }, [query]);
   const [filter, setFilter] = useState<FilterOption>('all');
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   // "Edit Items" modal target — clone selectedOrder into this state to
@@ -261,14 +274,16 @@ export default function OrdersPage() {
   useEffect(() => {
     fetchOrders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.page, search, filter]);
+  }, [pagination.page, query, filter]);
 
   const fetchOrders = async () => {
+    // Only the newest request may fill the list.
+    const fetchId = ++latestFetch.current;
     try {
       setIsLoading(true);
       // Map the combined filter to the actual query params
       const params: any = {
-        search: search || undefined,
+        search: query || undefined,
         page: pagination.page,
         limit: 20,
       };
@@ -281,12 +296,13 @@ export default function OrdersPage() {
       }
 
       const response = await ordersApi.getOrders(params);
+      if (fetchId !== latestFetch.current) return;
       setOrders(response.data.data.orders);
       setPagination(response.data.data.pagination);
     } catch (error) {
       console.error('Failed to fetch orders:', error);
     } finally {
-      setIsLoading(false);
+      if (fetchId === latestFetch.current) setIsLoading(false);
     }
   };
 
@@ -949,6 +965,9 @@ export default function OrdersPage() {
             className="input pl-12"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') setQuery(search.trim());
+            }}
           />
         </div>
         <select

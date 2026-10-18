@@ -981,27 +981,44 @@ export class OrdersService {
       .leftJoinAndSelect('order.items', 'items');
 
     if (search) {
-      // Split on whitespace so "Lisa Davis" matches firstName=Lisa OR lastName=Davis
-      const tokens = search.trim().split(/\s+/).filter(Boolean);
+      const text = search.trim();
+      const tokens = text.split(/\s+/).filter(Boolean).slice(0, 6);
+      // Phone numbers are stored as digits; "0401 792 240" should match.
+      const digits = text.replace(/[\s()-]/g, '');
+      // The name to match: the saved customer (first, last, business) or
+      // the name kept on the order — website buyers and walk-ins typed at
+      // the till (Sally, 19 Oct 2026: "Christine Rudolph" wasn't found).
+      const nameExpr =
+        "CONCAT_WS(' ', customer.firstName, customer.lastName, customer.company, order.customerNameSnapshot)";
       if (tokens.length > 0) {
         query.andWhere(
           new Brackets((qb: WhereExpressionBuilder) => {
             // Full-string match against order number and simple fields
-            qb.where('order.orderNumber LIKE :fullSearch', { fullSearch: `%${search}%` })
-              .orWhere('order.magentoIncrementId LIKE :fullSearch', { fullSearch: `%${search}%` })
-              .orWhere('customer.phone LIKE :fullSearch', { fullSearch: `%${search}%` })
-              .orWhere('customer.email LIKE :fullSearch', { fullSearch: `%${search}%` });
-
-            // Per-token match against name + CONCAT fullname (so "lisa davis" matches)
-            tokens.forEach((token, idx) => {
-              const key = `token${idx}`;
-              qb.orWhere(`customer.firstName LIKE :${key}`, { [key]: `%${token}%` })
-                .orWhere(`customer.lastName LIKE :${key}`, { [key]: `%${token}%` });
-            });
-
+            qb.where('order.orderNumber LIKE :fullSearch', { fullSearch: `%${text}%` })
+              .orWhere('order.magentoIncrementId LIKE :fullSearch', { fullSearch: `%${text}%` })
+              .orWhere('customer.email LIKE :fullSearch', { fullSearch: `%${text}%` })
+              // Website orders keep the buyer's email and phone in the
+              // import note.
+              .orWhere("(order.source = 'magento' AND order.internalNotes LIKE :fullSearch)", {
+                fullSearch: `%${text}%`,
+              });
+            if (/^\+?\d{3,}$/.test(digits)) {
+              qb.orWhere('customer.phone LIKE :digits', { digits: `%${digits}%` })
+                .orWhere('customer.mobile LIKE :digits', { digits: `%${digits}%` })
+                .orWhere("(order.source = 'magento' AND REPLACE(order.internalNotes, ' ', '') LIKE :digits)", {
+                  digits: `%${digits}%`,
+                });
+            }
+            // Every word must be in the name, so "Christine Rudolph" finds
+            // her and not everyone called Christine.
             qb.orWhere(
-              "CONCAT(customer.firstName, ' ', customer.lastName) LIKE :fullSearch",
-              { fullSearch: `%${search}%` },
+              new Brackets((nb: WhereExpressionBuilder) => {
+                tokens.forEach((token, idx) => {
+                  const key = `token${idx}`;
+                  if (idx === 0) nb.where(`${nameExpr} LIKE :${key}`, { [key]: `%${token}%` });
+                  else nb.andWhere(`${nameExpr} LIKE :${key}`, { [key]: `%${token}%` });
+                });
+              }),
             );
           }),
         );
