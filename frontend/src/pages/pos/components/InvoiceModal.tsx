@@ -88,6 +88,9 @@ interface InvoiceData {
   // this sale; refundDueToCustomer is what's left over when the return
   // was worth MORE than the replacement and has to be paid back.
   exchangeFromOrderNumber?: string;
+  // What came back on the exchange, printed on the new sale's invoice so
+  // the customer gets one docket (Sally, 20 Oct 2026).
+  returnedItems?: Array<{ qty: number; name: string; sku?: string; amount: number }>;
   creditApplied?: number;
   refundDueToCustomer?: number;
   // Total refunded on this order to date (re-prints after a refund).
@@ -520,6 +523,32 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
                   <td style={td('right')}>{money(r.rowTotal)}</td>
                 </tr>
               ))}
+              {invoice.returnedItems && invoice.returnedItems.length > 0 && (
+                <>
+                  <tr>
+                    <td
+                      colSpan={7}
+                      style={{ ...td('left'), fontWeight: 800, fontSize: '11px', letterSpacing: '1px', color: ORANGE, paddingTop: '12px' }}
+                    >
+                      RETURNED{invoice.exchangeFromOrderNumber ? ` — EXCHANGE OF ${invoice.exchangeFromOrderNumber}` : ''}
+                    </td>
+                  </tr>
+                  {invoice.returnedItems.map((r, i) => (
+                    <tr key={`returned-${i}`}>
+                      <td style={td('center')}>{r.qty}</td>
+                      <td style={td('left')}>
+                        {r.name}
+                        {r.sku ? <span style={{ color: MUTED, fontSize: '11px' }}> — {r.sku}</span> : null}
+                      </td>
+                      <td style={td('right')}>{r.qty ? money(r.amount / r.qty) : ''}</td>
+                      <td style={td('center')}></td>
+                      <td style={td('center')}></td>
+                      <td style={td('center')}></td>
+                      <td style={{ ...td('right'), color: ORANGE }}>-{money(r.amount)}</td>
+                    </tr>
+                  ))}
+                </>
+              )}
             </tbody>
           </table>
 

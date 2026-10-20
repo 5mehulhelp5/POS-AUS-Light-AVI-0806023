@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../../store';
 import {
@@ -15,7 +15,7 @@ import {
 import toast from 'react-hot-toast';
 import { CartItem, CartDiscount } from '../../../store/slices/cartSlice';
 import type { TradeInfo } from '../../../store/slices/productsSlice';
-import { competitorApi, customersApi } from '../../../services/api';
+import { competitorApi, customersApi, ordersApi } from '../../../services/api';
 import { fmtPct } from '../../../utils/pricingConfig';
 import { effectiveLineDiscount, lineDiscountSource } from '../../../store/slices/cartSlice';
 import { posImage } from '../../../utils/imageUrl';
@@ -90,6 +90,31 @@ export default function CartPanel({
   // Delivery is picked in PaymentModal but mirrored to the cart slice
   // so this sidebar can show the fee + a matching grand total.
   const deliveryFee = useSelector((s: RootState) => s.cart.deliveryFee);
+  // Exchange: show the return's credit against this sale in the cart, so
+  // staff see what's covered and what's owed back (Sally, 20 Oct 2026).
+  const exchangeFromOrderId = useSelector((s: RootState) => s.cart.exchangeFromOrderId);
+  const exchangeFromOrderNumber = useSelector((s: RootState) => s.cart.exchangeFromOrderNumber);
+  const [exchangeCredit, setExchangeCredit] = useState<number | null>(null);
+  useEffect(() => {
+    if (!exchangeFromOrderId) {
+      setExchangeCredit(null);
+      return;
+    }
+    let cancelled = false;
+    ordersApi
+      .getRefunds(exchangeFromOrderId)
+      .then((r) => {
+        if (cancelled) return;
+        const refunds = r.data?.data?.refunds || [];
+        setExchangeCredit(refunds.length ? Number(refunds[0].refundAmount) || 0 : 0);
+      })
+      .catch(() => {
+        if (!cancelled) setExchangeCredit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [exchangeFromOrderId]);
   const deliveryType = useSelector((s: RootState) => s.cart.deliveryType);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
@@ -790,6 +815,30 @@ export default function CartPanel({
             ${(total + deliveryFee).toFixed(2)}
           </span>
         </div>
+        {exchangeFromOrderId && exchangeCredit != null && exchangeCredit > 0 && (() => {
+          const grand = total + deliveryFee;
+          const used = Math.min(exchangeCredit, grand);
+          const toPay = Math.max(0, grand - used);
+          const back = Math.max(0, exchangeCredit - grand);
+          return (
+            <div className="mt-2 pt-2 border-t border-purple-500/40 space-y-1 text-sm">
+              <div className="flex justify-between text-purple-400">
+                <span>Return credit{exchangeFromOrderNumber ? ` (${exchangeFromOrderNumber})` : ''}</span>
+                <span>-${used.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between font-bold">
+                <span>To pay</span>
+                <span>${toPay.toFixed(2)}</span>
+              </div>
+              {back > 0.005 && (
+                <div className="flex justify-between text-amber-500 font-semibold">
+                  <span>Refund to customer</span>
+                  <span>${back.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Action Buttons */}

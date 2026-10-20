@@ -211,8 +211,24 @@ export default function OrdersPage() {
         toast.error('Could not load order for printing');
         return;
       }
+      // An exchange's replacement order: print what came back too, from
+      // the refund on the original order made just before this sale.
+      let exchangeRefund: any;
+      if (o.exchangeFromOrder?.id) {
+        try {
+          const er = await ordersApi.getRefunds(o.exchangeFromOrder.id);
+          const before = (er.data?.data?.refunds || []).filter(
+            (rf: any) => new Date(rf.createdAt).getTime() <= new Date(o.createdAt).getTime() + 60000,
+          );
+          exchangeRefund = before.sort(
+            (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          )[0];
+        } catch {
+          exchangeRefund = undefined;
+        }
+      }
       setInvoiceData(
-        buildInvoiceData(o, undefined, refundsRes?.data?.data?.refunds || []),
+        buildInvoiceData(o, undefined, refundsRes?.data?.data?.refunds || [], exchangeRefund),
       );
     } catch {
       toast.error('Could not load order for printing');

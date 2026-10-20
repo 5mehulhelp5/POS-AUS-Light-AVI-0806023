@@ -12,6 +12,7 @@ import toast from 'react-hot-toast';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../../../store';
 import { ordersApi, customersApi, quotesApi } from '../../../services/api';
+import { returnedFromRefund } from '../../../utils/orderInvoice';
 import {
   setTradeAutoDiscounts,
   setCustomer,
@@ -271,6 +272,9 @@ export default function PaymentModal({
   // store credit that must stay on the account, so "the difference" is
   // this return's value minus the new sale, never the whole balance.
   const [exchangeCreditAmount, setExchangeCreditAmount] = useState<number | null>(null);
+  // The refund that started this exchange — its items print as RETURNED
+  // on this sale's invoice (one docket, Sally 20 Oct 2026).
+  const [exchangeRefund, setExchangeRefund] = useState<any>(null);
   useEffect(() => {
     let cancelled = false;
     if (!cart.exchangeFromOrderId) {
@@ -286,6 +290,7 @@ export default function PaymentModal({
         setExchangeCreditAmount(
           refunds.length ? Number(refunds[0].refundAmount) || 0 : 0,
         );
+        setExchangeRefund(refunds[0] || null);
       })
       .catch(() => {
         // Unknown -> offer nothing rather than risk paying out the
@@ -470,6 +475,14 @@ export default function PaymentModal({
       .then((r) => setStoreCreditBalance(Number(r.data.data.balance) || 0))
       .catch(() => setStoreCreditBalance(0));
   }, [cart.customerId]);
+
+  // An exchange always uses the return's credit — ticked for the cashier
+  // and can't be unticked (Sally, 20 Oct 2026: staff kept missing it).
+  useEffect(() => {
+    if (cart.exchangeFromOrderId && cart.customerId && storeCreditBalance > 0) {
+      setUseStoreCredit(true);
+    }
+  }, [cart.exchangeFromOrderId, cart.customerId, storeCreditBalance]);
 
   // When store credit is toggled on, default it to min(balance, total)
   useEffect(() => {
@@ -1047,6 +1060,7 @@ export default function PaymentModal({
         // surface it on the invoice so the cashier pays it out instead
         // of leaving it sitting on the account.
         exchangeFromOrderNumber: cart.exchangeFromOrderNumber || undefined,
+        returnedItems: cart.exchangeFromOrderId ? returnedFromRefund(exchangeRefund) : undefined,
         creditApplied: creditApplied > 0 ? creditApplied : undefined,
         // Same capped figure as the payout — this exchange's difference
         // only, never the customer's unrelated credit balance.
@@ -1238,12 +1252,16 @@ export default function PaymentModal({
                 <input
                   type="checkbox"
                   checked={useStoreCredit}
+                  disabled={!!cart.exchangeFromOrderId}
                   onChange={(e) => setUseStoreCredit(e.target.checked)}
                   className="w-4 h-4"
                 />
                 <GiftIcon className="h-5 w-5 text-purple-300" />
                 <span className="text-sm font-medium text-purple-200">
                   Apply store credit
+                  {cart.exchangeFromOrderId && (
+                    <span className="ml-1 text-xs font-normal text-gray-400">(exchange — applied automatically)</span>
+                  )}
                 </span>
               </label>
               <span className="text-xs text-gray-400">

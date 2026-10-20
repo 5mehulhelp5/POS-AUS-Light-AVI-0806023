@@ -7,7 +7,20 @@
 // when supplied, refunded quantities are marked per line and the totals
 // block shows the refunded amount — a reprint after a partial refund
 // must not read like the original untouched sale.
-export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]) {
+// exchangeRefund: the refund on the ORIGINAL order that this sale replaced
+// (an exchange); its items print as RETURNED on this invoice.
+export function returnedFromRefund(refund: any) {
+  const items = (refund?.items || []).filter((ri: any) => Number(ri.quantity) > 0);
+  if (!items.length) return undefined;
+  return items.map((ri: any) => ({
+    qty: Number(ri.quantity),
+    name: ri.name || ri.sku || 'Returned item',
+    sku: ri.sku || undefined,
+    amount: Math.round(Number(ri.amount || 0) * 100) / 100,
+  }));
+}
+
+export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[], exchangeRefund?: any) {
   const cust = o.customer || fallbackCustomer || null;
   const addr = cust
     ? [
@@ -143,6 +156,7 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     // Present when the order detail endpoint attached exchange links
     // (this sale replaced goods returned on an earlier order).
     exchangeFromOrderNumber: o.exchangeFromOrder?.orderNumber || undefined,
+    returnedItems: returnedFromRefund(exchangeRefund),
     // Always present (Sally, 7 Sep: a paid-in-full reprint must show
     // PAID + BALANCE $0.00, not re-bill the total). balanceDue is
     // pre-credit — InvoiceModal subtracts creditApplied.
