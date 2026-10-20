@@ -104,7 +104,9 @@ export default function ProductDetailModal({
 
   const [competitor, setCompetitor] = useState<any>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
-  const [competitorError, setCompetitorError] = useState<string | null>(null);
+  const [, setCompetitorError] = useState<string | null>(null);
+  // Weekly Price Watch prices from every competitor (Sally, 20 Oct 2026).
+  const [watch, setWatch] = useState<any[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,15 +134,19 @@ export default function ProductDetailModal({
     if (tab !== 'competitors' || competitor || competitorLoading) return;
     setCompetitorLoading(true);
     setCompetitorError(null);
-    competitorApi
-      .getPrice(fallbackProduct.name, fallbackProduct.sku)
-      .then((r) => setCompetitor(r.data?.data || r.data))
-      .catch((e) => {
-        setCompetitorError(
-          e.response?.data?.message || 'No competitor pricing found',
-        );
-      })
-      .finally(() => setCompetitorLoading(false));
+    Promise.allSettled([
+      competitorApi
+        .getPrice(fallbackProduct.name, fallbackProduct.sku)
+        .then((r) => setCompetitor(r.data?.data || r.data || {}))
+        .catch((e) => {
+          setCompetitor({});
+          setCompetitorError(e.response?.data?.message || 'No competitor pricing found');
+        }),
+      competitorApi
+        .getPrices(fallbackProduct.sku)
+        .then((r) => setWatch(r.data?.data || []))
+        .catch(() => setWatch([])),
+    ]).finally(() => setCompetitorLoading(false));
   }, [tab, competitor, competitorLoading, fallbackProduct.name, fallbackProduct.sku]);
 
   const product = detail?.product || fallbackProduct;
@@ -226,7 +232,25 @@ export default function ProductDetailModal({
   const onSale = isProductOnSale(product);
   const effectivePrice = effectiveProductPrice(product);
   const ourPrice = Number(effectivePrice);
-  const compPrice = competitor?.price ? Number(competitor.price) : null;
+  // Every competitor price we know: the weekly Price Watch list, with the
+  // live Online Lighting check replacing its weekly figure. Cheapest first.
+  const compRows = (() => {
+    const rows = (watch || []).map((w: any) => ({ ...w }));
+    if (competitor?.price) {
+      const live = {
+        competitor: 'onlinelighting',
+        label: 'Online Lighting',
+        price: Number(competitor.price),
+        url: competitor.url || null,
+        checkedAt: competitor.checkedAt || null,
+      };
+      const i = rows.findIndex((r: any) => r.competitor === 'onlinelighting');
+      if (i >= 0) rows[i] = live;
+      else rows.push(live);
+    }
+    return rows.filter((r: any) => r.price > 0).sort((a: any, b: any) => a.price - b.price);
+  })();
+  const compPrice = compRows.length ? compRows[0].price : null;
   const diff = compPrice !== null ? ourPrice - compPrice : null;
   const diffPct =
     compPrice !== null && compPrice > 0 ? (diff! / compPrice) * 100 : null;
@@ -632,23 +656,18 @@ export default function ProductDetailModal({
                 <>
                   {competitorLoading ? (
                     <p className="text-gray-400">Checking competitor pricing...</p>
-                  ) : competitorError ? (
-                    <div className="text-gray-400">
-                      <p>{competitorError}</p>
-                      <p className="text-xs mt-2">
-                        We compare against onlinelighting.com.au by SKU and name.
-                      </p>
-                    </div>
-                  ) : compPrice !== null ? (
+                  ) : compRows.length > 0 ? (
                     <div className="space-y-3">
                       {/* Plain price-comparison table — just the numbers
                           and a link, no "we are more expensive" editorial
-                          (Sally's request). */}
+                          (Sally's request). All competitors, cheapest first
+                          (20 Oct 2026). */}
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="text-left text-gray-400 border-b border-gray-700">
                             <th className="py-2 font-medium">Source</th>
                             <th className="py-2 font-medium text-right">Price</th>
+                            <th className="py-2 font-medium text-right">Checked</th>
                             <th className="py-2"></th>
                           </tr>
                         </thead>
@@ -659,48 +678,58 @@ export default function ProductDetailModal({
                               ${ourPrice.toFixed(2)}
                             </td>
                             <td></td>
+                            <td></td>
                           </tr>
-                          <tr>
-                            <td className="py-2">Online Lighting</td>
-                            <td className="py-2 text-right font-bold">
-                              ${compPrice.toFixed(2)}
-                            </td>
-                            <td className="py-2 text-right">
-                              {competitor.url && (
-                                <a
-                                  href={competitor.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-primary-400 underline"
-                                >
-                                  Link
-                                </a>
-                              )}
-                            </td>
-                          </tr>
+                          {compRows.map((r: any, i: number) => (
+                            <tr key={r.competitor} className="border-b border-gray-800 last:border-0">
+                              <td className="py-2">
+                                {r.label}
+                                {i === 0 && (
+                                  <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-600/20 text-green-500">
+                                    Cheapest
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 text-right font-bold">${r.price.toFixed(2)}</td>
+                              <td className="py-2 text-right text-xs text-gray-500">
+                                {r.checkedAt ? new Date(r.checkedAt).toLocaleDateString('en-AU') : ''}
+                              </td>
+                              <td className="py-2 text-right">
+                                {r.url && (
+                                  <a
+                                    href={r.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-primary-400 underline"
+                                  >
+                                    Link
+                                  </a>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
-                      {/* Neutral, factual difference — coloured but not
-                          worded as a judgement. */}
-                      {diff !== 0 && (
-                        <p
-                          className={`text-xs ${
-                            diff! < 0 ? 'text-green-300' : 'text-orange-300'
-                          }`}
-                        >
-                          {diff! < 0
-                            ? `$${Math.abs(diff!).toFixed(2)} lower (${Math.abs(diffPct!).toFixed(1)}%)`
-                            : `$${diff!.toFixed(2)} higher (${diffPct!.toFixed(1)}%)`}
+                      {/* Neutral, factual difference to the cheapest. */}
+                      {diff !== 0 && diff !== null && (
+                        <p className={`text-xs ${diff < 0 ? 'text-green-300' : 'text-orange-300'}`}>
+                          {diff < 0
+                            ? `$${Math.abs(diff).toFixed(2)} lower than the cheapest (${Math.abs(diffPct!).toFixed(1)}%)`
+                            : `$${diff.toFixed(2)} higher than the cheapest (${diffPct!.toFixed(1)}%)`}
                         </p>
                       )}
-                      {competitor.checkedAt && (
-                        <p className="text-[11px] text-gray-500">
-                          Last checked: {new Date(competitor.checkedAt).toLocaleString()}
-                        </p>
-                      )}
+                      <p className="text-[11px] text-gray-500">
+                        Weekly Price Watch prices; Online Lighting is checked live.
+                      </p>
                     </div>
                   ) : (
-                    <p className="text-gray-400">No competitor match found.</p>
+                    <div className="text-gray-400">
+                      <p>No competitor match found.</p>
+                      <p className="text-xs mt-2">
+                        None of the competitors in the weekly Price Watch list this SKU, and Online Lighting
+                        doesn't have it.
+                      </p>
+                    </div>
                   )}
                 </>
               )}

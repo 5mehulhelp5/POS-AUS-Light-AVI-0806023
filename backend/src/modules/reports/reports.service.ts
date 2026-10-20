@@ -672,8 +672,8 @@ export class ReportsService {
     // Victoria", "Havit Lighting" and "Havit" all group as "Havit".
     // Brands bought through another supplier group under that supplier
     // (Lucy, 16 Oct 2026: "anything that's an Aeratron fan basically, that
-    // is Calibo").
-    const SUPPLIER_OF: Record<string, string> = { aeratron: 'Calibo' };
+    // is Calibo"; Sally, 20 Oct 2026: Nordlux is ordered through Form).
+    const SUPPLIER_OF: Record<string, string> = { aeratron: 'Calibo', nordlux: 'Form' };
     const clean = (s: string | null): string => {
       let v = (s || '').replace(/\s+-\s+.*$/, '').trim();
       v = v.replace(/\s+(lighting|fans|lamps|costprice|for trade)$/i, '').trim();
@@ -848,6 +848,48 @@ export class ReportsService {
         );
       }
       return { poNumber, lines: lines.length, orders: byOrder.size };
+    });
+  }
+
+  // Take a back-order line off its PO: back to "not ordered" (Sally,
+  // 20 Oct 2026: the supplier can't supply for weeks, so Lucy reverts it
+  // and orders it again later, or it's refunded). Logged on the order.
+  async unmarkPurchaseOrder(lineId: number, user: { id: number }): Promise<{ lineId: number; poNumber: string }> {
+    return this.dataSource.transaction(async (m) => {
+      const rows: Array<{ id: number; orderId: number; sku: string; quantity: number; poNumber: string | null }> = await m.query(
+        `SELECT oi.id, oi.order_id orderId, oi.sku, oi.quantity, oi.po_number poNumber
+           FROM order_items oi
+          WHERE oi.id = ? AND oi.is_backorder = 1 AND oi.backorder_fulfilled_at IS NULL`,
+        [lineId],
+      );
+      const line = rows[0];
+      if (!line) throw new BadRequestException('That line is not an open backorder');
+      if (!line.poNumber) throw new BadRequestException('That line is not on a PO');
+      await m.query(`UPDATE order_items SET po_number = NULL, po_sent_at = NULL WHERE id = ?`, [lineId]);
+
+      const u = await m.findOne(User, { where: { id: user.id } });
+      const who = u ? [u.firstName, u.lastName].filter(Boolean).join(' ') : `user #${user.id}`;
+      const today = new Intl.DateTimeFormat('en-AU', {
+        timeZone: TZ,
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      }).format(new Date());
+      const what = `${Number(line.quantity)}× ${line.sku}`;
+      await m.save(
+        m.create(OrderEvent, {
+          orderId: Number(line.orderId),
+          userId: user.id,
+          type: 'po_removed',
+          description: `${what} taken off PO ${line.poNumber} by ${who} — back to not ordered.`,
+        }),
+      );
+      const note = `[${today}] ${what} taken off PO ${line.poNumber} — not ordered (by ${who})`;
+      await m.query(
+        `UPDATE orders SET internal_notes = IF(internal_notes IS NULL OR internal_notes = '', ?, CONCAT(internal_notes, '\n', ?)) WHERE id = ?`,
+        [note, note, Number(line.orderId)],
+      );
+      return { lineId, poNumber: line.poNumber };
     });
   }
 

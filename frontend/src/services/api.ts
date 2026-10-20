@@ -410,6 +410,7 @@ export const reportsApi = {
   customerHistory: (id: number) => api.get(`/reports/customers/${id}/history`),
   backorders: () => api.get('/reports/backorders'),
   // Purchase orders for backorders (Sally, 15 Oct 2026)
+  unorderBackorderLine: (lineId: number) => api.post(`/reports/backorders/lines/${lineId}/unorder`),
   nextPoNumber: (supplier: string) =>
     api.get('/reports/backorders/next-po-number', { params: { supplier } }),
   markPurchaseOrder: (data: { supplier: string; lineIds: number[]; poNumber?: string }) =>
@@ -527,6 +528,8 @@ export interface AutoSyncState {
 export const competitorApi = {
   getPrice: (productName: string, sku?: string) =>
     api.get('/competitor/price', { params: { name: productName, sku } }),
+  // Every competitor's latest weekly Price Watch price for the SKU.
+  getPrices: (sku: string) => api.get('/competitor/prices', { params: { sku } }),
 };
 
 // Price Watch dashboard (Admin only) — weekly competitor scrape results

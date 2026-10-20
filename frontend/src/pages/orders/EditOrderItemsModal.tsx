@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { swapParentsForOptions } from '../../utils/configurable';
 import toast from 'react-hot-toast';
 import {
   XMarkIcon,
@@ -58,14 +59,27 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
       return;
     }
     setSearching(true);
-    const t = setTimeout(() => {
-      productsApi
-        .getProducts({ search: search.trim(), limit: 12, inStock: false })
-        .then((r) => setSearchResults(r.data?.data?.products || []))
-        .catch(() => setSearchResults([]))
-        .finally(() => setSearching(false));
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const r = await productsApi.getProducts({ search: search.trim(), limit: 12 });
+        // A $0 option "parent" is swapped for its priced options (Sally,
+        // 20 Oct 2026: Waterfall Crystal Pendant Range came in at $0).
+        const list = await swapParentsForOptions(r.data?.data?.products || [], async (q) => {
+          const more = await productsApi.getProducts({ search: q, limit: 24 });
+          return more.data?.data?.products || [];
+        }, 12);
+        if (!cancelled) setSearchResults(list);
+      } catch {
+        if (!cancelled) setSearchResults([]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [showAddSearch, search]);
 
   const updateRow = (i: number, patch: Partial<Row>) =>

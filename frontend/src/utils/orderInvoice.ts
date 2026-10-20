@@ -29,21 +29,55 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
         (refundedQtyByItem[ri.orderItemId] || 0) + Number(ri.quantity || 0);
     }
   }
-  const items = (o.items || []).map((it: any) => ({
-    productId: it.productId ?? 0,
-    sku: it.sku || '',
-    name: it.name || it.productName || '',
-    quantity: it.quantity,
-    unitPrice: parseFloat(it.unitPrice),
-    discountPercent: parseFloat(it.discountPercent || 0),
-    discountAmount: parseFloat(it.discountAmount || 0),
-    taxAmount: parseFloat(it.taxAmount || 0),
-    rowTotal: parseFloat(it.rowTotal ?? it.unitPrice * it.quantity),
-    isBackorder: !!it.isBackorder,
-    // Only some of the line on back order (website orders).
-    backorderQty: it.backorderQty ?? undefined,
-    isLaybyHeld: !!it.isLaybyHeld,
-    refundedQty: refundedQtyByItem[it.id] || 0,
+  const lines = (o.items || []).map((it: any) => {
+    // A back order that has arrived prints as taken.
+    const openBackorder = !!it.isBackorder && !it.backorderFulfilledAt;
+    return {
+      productId: it.productId ?? 0,
+      sku: it.sku || '',
+      name: it.name || it.productName || '',
+      quantity: Number(it.quantity),
+      unitPrice: parseFloat(it.unitPrice),
+      discountPercent: parseFloat(it.discountPercent || 0),
+      discountAmount: parseFloat(it.discountAmount || 0),
+      taxAmount: parseFloat(it.taxAmount || 0),
+      rowTotal: parseFloat(it.rowTotal ?? it.unitPrice * it.quantity),
+      isBackorder: openBackorder,
+      // How many of the line are on back order (website orders can be
+      // part of a line).
+      backorderQty: openBackorder ? Math.min(Number(it.quantity), Number(it.backorderQty ?? it.quantity)) : 0,
+      isLaybyHeld: !!it.isLaybyHeld,
+      laybyHeldQty: it.isLaybyHeld ? Number(it.quantity) : 0,
+      refundedQty: refundedQtyByItem[it.id] || 0,
+    };
+  });
+  // One line per product: a sale split into take-now + back order (or
+  // lay-by) parts prints as the single line the customer bought, e.g. 4 x
+  // with 2 taken / 2 on back order — not two lines of 2 (Sally, 20 Oct
+  // 2026, POS-0168). Only identical product, name, price and discount merge.
+  const merged = new Map<string, any>();
+  for (const l of lines) {
+    const key = [l.productId || '', l.sku, l.name, l.unitPrice.toFixed(4), l.discountPercent.toFixed(4)].join('|');
+    const m = merged.get(key);
+    if (!m) {
+      merged.set(key, { ...l });
+      continue;
+    }
+    m.quantity += l.quantity;
+    m.rowTotal += l.rowTotal;
+    m.discountAmount += l.discountAmount;
+    m.taxAmount += l.taxAmount;
+    m.backorderQty += l.backorderQty;
+    m.laybyHeldQty += l.laybyHeldQty;
+    m.refundedQty += l.refundedQty;
+    m.isBackorder = m.isBackorder || l.isBackorder;
+    m.isLaybyHeld = m.isLaybyHeld || l.isLaybyHeld;
+  }
+  const items = [...merged.values()].map((m) => ({
+    ...m,
+    rowTotal: Math.round(m.rowTotal * 100) / 100,
+    backorderQty: m.isBackorder ? m.backorderQty : undefined,
+    laybyHeldQty: m.isLaybyHeld ? m.laybyHeldQty : undefined,
   }));
   // Website orders carry no POS payment rows — Magento took the money.
   // Paid on the website prints as one WEBSITE payment (view-only orders,
@@ -67,10 +101,10 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
   const grandTotalNum = parseFloat(o.grandTotal);
   const takeNowSubtotal = (o.items || [])
-    .filter((it: any) => !it.isBackorder && !it.isLaybyHeld)
+    .filter((it: any) => !(it.isBackorder && !it.backorderFulfilledAt) && !it.isLaybyHeld)
     .reduce((s: number, it: any) => s + Number(it.rowTotal || 0), 0);
   const hasDeferred = (o.items || []).some(
-    (it: any) => it.isBackorder || it.isLaybyHeld,
+    (it: any) => (it.isBackorder && !it.backorderFulfilledAt) || it.isLaybyHeld,
   );
   const userName = o.user
     ? [o.user.firstName, o.user.lastName].filter(Boolean).join(' ').trim() ||
@@ -126,7 +160,7 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
       Math.round((grandTotalNum - paidNonCredit) * 100) / 100,
     ),
     isLayby: (o.items || []).some((it: any) => it.isLaybyHeld) || o.orderType === 'layby',
-    isBackorder: (o.items || []).some((it: any) => it.isBackorder),
+    isBackorder: (o.items || []).some((it: any) => it.isBackorder && !it.backorderFulfilledAt),
     takeNowSubtotal: hasDeferred
       ? Math.round(takeNowSubtotal * 100) / 100
       : undefined,

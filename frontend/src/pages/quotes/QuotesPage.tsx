@@ -24,6 +24,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { formatPhone } from '../../utils/phone';
 import { posImage } from '../../utils/imageUrl';
+import { swapParentsForOptions } from '../../utils/configurable';
 
 interface Quote {
   id: number;
@@ -357,21 +358,11 @@ export default function QuotesPage() {
       try {
         const response = await productsApi.getProducts({ search: term, limit: 24 });
         const found: any[] = response.data.data?.products || [];
-        const isParent = (p: any) => p.productType === 'configurable';
-        let list = found.filter((p) => !isParent(p));
-        // A parent matched but none of its options did (e.g. searched by
-        // the parent's name): fetch the options — their SKUs start with
-        // the parent's SKU.
-        for (const parent of found.filter(isParent).slice(0, 3)) {
-          const prefix = String(parent.sku || '').toLowerCase();
-          if (!prefix || list.some((p) => String(p.sku || '').toLowerCase().startsWith(prefix))) continue;
-          const r = await productsApi.getProducts({ search: parent.sku, limit: 24 });
-          const options = ((r.data.data?.products || []) as any[]).filter(
-            (p) => !isParent(p) && String(p.sku || '').toLowerCase().startsWith(prefix),
-          );
-          list = [...list, ...options.filter((o) => !list.some((x) => x.id === o.id))];
-        }
-        if (!cancelled) setProductResults(list.slice(0, 24));
+        const list = await swapParentsForOptions(found, async (q) => {
+          const r = await productsApi.getProducts({ search: q, limit: 24 });
+          return r.data.data?.products || [];
+        });
+        if (!cancelled) setProductResults(list);
       } catch {
         if (!cancelled) setProductResults([]);
       } finally {

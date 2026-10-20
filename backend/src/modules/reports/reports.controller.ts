@@ -152,6 +152,14 @@ export class ReportsController {
     return { success: true, data: await this.reportsService.markPurchaseOrder(body, user) };
   }
 
+  // Back to "not ordered" (Sally, 20 Oct 2026) — managers and admins, like
+  // creating the PO.
+  @Post('backorders/lines/:lineId/unorder')
+  @ApiOperation({ summary: 'Take a backorder line off its PO (back to not ordered)' })
+  async unmarkPurchaseOrder(@Param('lineId', ParseIntPipe) lineId: number, @CurrentUser() user: any) {
+    return { success: true, data: await this.reportsService.unmarkPurchaseOrder(lineId, user) };
+  }
+
   // ---- Original reports (kept for the Discounts and Quotes tabs)
   @Get('sales')
   @ApiOperation({ summary: 'Get sales report' })

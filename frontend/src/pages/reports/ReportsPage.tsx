@@ -886,6 +886,20 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
     setPoFor({ supplier: g.supplier, lines });
   };
 
+  const unorder = async (l: BoLine) => {
+    if (!window.confirm(
+      `Take ${l.qty}× ${l.sku} (${l.orderNumber}) off PO ${l.poNumber}?\n\n` +
+      'It goes back to "Not ordered", so it can go on a new PO later. The order gets a note.',
+    )) return;
+    try {
+      await reportsApi.unorderBackorderLine(l.lineId);
+      toast.success(`${l.sku} is back to not ordered`);
+      reload();
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+  };
+
   const lineCols: Col<BoLine>[] = [
     ...(readOnly
       ? []
@@ -948,10 +962,23 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
     { key: 'v', label: 'Sell value', align: 'right', value: (r) => r.value, render: (r) => money(r.value) },
     {
       key: 'po', label: 'PO', value: (r) => r.poNumber || '',
+      // Click the PO number to put the line back to "not ordered" (Sally,
+      // 20 Oct 2026: supplier can't supply; order again later or refund).
       render: (r) =>
         r.poNumber ? (
           <span className="whitespace-nowrap">
-            <span className="font-semibold text-green-500">{r.poNumber}</span>
+            {readOnly ? (
+              <span className="font-semibold text-green-500">{r.poNumber}</span>
+            ) : (
+              <button
+                type="button"
+                className="font-semibold text-green-500 hover:text-red-500 hover:line-through"
+                title="Click to take this line off the PO — back to not ordered"
+                onClick={() => unorder(r)}
+              >
+                {r.poNumber}
+              </button>
+            )}
             {r.poSentAt && <span className="text-xs text-gray-500"> · {dateOnly(r.poSentAt)}</span>}
           </span>
         ) : (

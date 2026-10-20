@@ -7,6 +7,12 @@ import { CompetitorService } from './competitor.service';
 export class CompetitorController {
   constructor(private readonly competitorService: CompetitorService) {}
 
+  // All competitors from the weekly Price Watch, cheapest first.
+  @Get('prices')
+  async getPrices(@Query('sku') sku?: string) {
+    return { success: true, data: await this.competitorService.getWatchPrices(sku || '') };
+  }
+
   @Get('price')
   async getPrice(
     @Query('name') productName: string,

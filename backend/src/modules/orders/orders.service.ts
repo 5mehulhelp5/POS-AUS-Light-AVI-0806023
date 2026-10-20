@@ -2119,15 +2119,26 @@ export class OrdersService {
       item.isLaybyHeld = false;
     }
     const after = labelOf(item);
-    if (before === after) {
-      return (await this.findById(orderId)) as Order;
-    }
+    // Picking the status a line already has still re-checks the order —
+    // that's how a fully paid lay-by whose lines are all taken gets
+    // completed (Sally, 20 Oct 2026: POS-0117 stuck on LAY BY).
+    const changed = before !== after;
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
-      await queryRunner.manager.save(item);
+      if (changed) await queryRunner.manager.save(item);
+      const paidSoFar = async (): Promise<number> => {
+        const paidRow = await queryRunner.manager
+          .createQueryBuilder(Payment, 'p')
+          .where('p.orderId = :orderId', { orderId })
+          .andWhere('p.status = :status', { status: PaymentEntityStatus.COMPLETED })
+          .select('COALESCE(SUM(p.amount), 0)', 'total')
+          .getRawOne();
+        return Number(paidRow?.total || 0);
+      };
+      let completedNow = false;
 
       // Order-level status follows the lines for standard (non-layby)
       // orders: any open backorder line => BACKORDER_PENDING; none left
@@ -2146,21 +2157,33 @@ export class OrdersService {
           if (openBackorder) {
             order.status = OrderStatus.BACKORDER_PENDING;
           } else {
-            const paidRow = await queryRunner.manager
-              .createQueryBuilder(Payment, 'p')
-              .where('p.orderId = :orderId', { orderId })
-              .andWhere('p.status = :status', {
-                status: PaymentEntityStatus.COMPLETED,
-              })
-              .select('COALESCE(SUM(p.amount), 0)', 'total')
-              .getRawOne();
-            const paidTotal = Number(paidRow?.total || 0);
+            const paidTotal = await paidSoFar();
             const balanceOwed = paidTotal + 0.01 < Number(order.grandTotal);
             order.status = balanceOwed ? OrderStatus.PENDING : OrderStatus.COMPLETE;
             if (!balanceOwed) order.paymentStatus = PaymentStatus.PAID;
           }
           await queryRunner.manager.save(order);
         }
+      } else if (
+        order.status === OrderStatus.LAYBY_ACTIVE ||
+        order.status === OrderStatus.LAYBY_EXPIRED
+      ) {
+        // Lay-by: paid in full and nothing still held or on back order =>
+        // the customer has everything, so it's complete.
+        const stillOpen = order.items.some(
+          (i) => (i.isBackorder && !i.backorderFulfilledAt) || i.isLaybyHeld,
+        );
+        if (!stillOpen && (await paidSoFar()) + 0.01 >= Number(order.grandTotal)) {
+          order.status = OrderStatus.COMPLETE;
+          order.paymentStatus = PaymentStatus.PAID;
+          await queryRunner.manager.save(order);
+          completedNow = true;
+        }
+      }
+
+      if (!changed && !completedNow) {
+        await queryRunner.commitTransaction();
+        return (await this.findById(orderId)) as Order;
       }
 
       try {
@@ -2168,14 +2191,26 @@ export class OrdersService {
         const who = editor
           ? [editor.firstName, editor.lastName].filter(Boolean).join(' ')
           : `user #${userId}`;
-        await queryRunner.manager.save(
-          queryRunner.manager.create(OrderEvent, {
-            orderId,
-            userId,
-            type: 'item_status',
-            description: `${item.quantity}x ${item.name}: status changed from ${before} to ${after} by ${who}.`,
-          }),
-        );
+        if (changed) {
+          await queryRunner.manager.save(
+            queryRunner.manager.create(OrderEvent, {
+              orderId,
+              userId,
+              type: 'item_status',
+              description: `${item.quantity}x ${item.name}: status changed from ${before} to ${after} by ${who}.`,
+            }),
+          );
+        }
+        if (completedNow) {
+          await queryRunner.manager.save(
+            queryRunner.manager.create(OrderEvent, {
+              orderId,
+              userId,
+              type: 'completed',
+              description: `Lay-by completed — paid in full and every item taken (${who}).`,
+            }),
+          );
+        }
       } catch (evErr) {
         // eslint-disable-next-line no-console
         console.error(`[orders.setItemStatus] event write failed for order ${orderId}:`, evErr);

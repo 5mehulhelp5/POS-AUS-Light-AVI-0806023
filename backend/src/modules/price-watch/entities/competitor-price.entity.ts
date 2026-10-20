@@ -5,6 +5,7 @@ import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 @Entity('competitor_price_snapshots')
 @Index(['runId', 'sku'])
 @Index(['runId', 'competitor'])
+@Index(['sku'])
 export class CompetitorPriceSnapshot {
   @PrimaryGeneratedColumn({ unsigned: true })
   id: number;

@@ -438,7 +438,7 @@ export default function OrdersPage() {
       const fresh = await ordersApi.getOrder(order.id);
       setSelectedOrder({ ...fresh.data.data.order, refunds: order.refunds || [] });
       toast.success(
-        `${item.name} marked ${status === 'backorder' ? 'Back Order' : status === 'layby' ? 'Lay-by' : 'Paid'}`,
+        `${item.name} marked ${status === 'backorder' ? 'Back Order' : status === 'layby' ? 'Lay-by' : 'Complete'}`,
       );
       fetchOrders();
     } catch (err: any) {
@@ -1527,7 +1527,8 @@ export default function OrdersPage() {
                             >
                               <option value="backorder">Back Order</option>
                               <option value="layby">Lay-by</option>
-                              <option value="paid">Paid</option>
+                              {/* "Complete" = paid and taken (Sally, 20 Oct 2026). */}
+                              <option value="paid">Complete (taken)</option>
                             </select>
                           )}
                           {webLineEditable(selectedOrder, item) && (
@@ -1729,6 +1730,37 @@ export default function OrdersPage() {
                     Cancel Lay By
                   </button>
                 )}
+                {/* A lay-by that's paid in full with every item taken (Sally,
+                    20 Oct 2026: POS-0117 stayed on LAY BY after collection). */}
+                {['layby_active', 'layby_expired'].includes(selectedOrder.status) &&
+                  !isLocked(selectedOrder) &&
+                  balanceDue(selectedOrder) <= 0.005 &&
+                  (selectedOrder.items || []).length > 0 &&
+                  (selectedOrder.items || []).every(
+                    (i: any) => !(i.isBackorder && !i.backorderFulfilledAt) && !i.isLaybyHeld,
+                  ) && (
+                    <button
+                      className="btn-primary bg-green-600 hover:bg-green-700"
+                      disabled={itemStatusSaving !== null}
+                      title="Paid in full and every item taken — close the lay-by"
+                      onClick={async () => {
+                        const first = selectedOrder.items[0];
+                        setItemStatusSaving(first.id);
+                        try {
+                          await ordersApi.setItemStatus(selectedOrder.id, first.id, 'paid');
+                          await viewOrder(selectedOrder.id);
+                          fetchOrders();
+                          toast.success(`${selectedOrder.orderNumber} completed`);
+                        } catch (err: any) {
+                          toast.error(err?.response?.data?.message || 'Could not complete the order');
+                        } finally {
+                          setItemStatusSaving(null);
+                        }
+                      }}
+                    >
+                      Complete Order
+                    </button>
+                  )}
                 {canVoid(selectedOrder) && (
                   <button
                     className="btn-secondary border border-red-500/60 text-red-400 hover:bg-red-500/10"
@@ -2520,21 +2552,10 @@ export default function OrdersPage() {
                 >
                   Cancel
                 </button>
-                {/* Add Lights (Sally, 25 Aug): customer collecting a
-                    backorder wants to add products or change qty —
-                    jump to the item editor for this order. The server
-                    still refuses edits on completed/refunded orders. */}
-                <button
-                  className="btn-primary bg-green-600 hover:bg-green-700"
-                  onClick={() => {
-                    setEditItemsOrder(refundOrder);
-                    setRefundOrder(null);
-                  }}
-                  disabled={isProcessingRefund}
-                  title="Add products to this order or change quantities"
-                >
-                  Add Lights
-                </button>
+                {/* No Add Lights on the refund screen (Sally, 20 Oct 2026:
+                    staff thought they could add a light here instead of
+                    carrying on with Refund Credits & Exchange). It stays on
+                    the order screen itself. */}
                 {/* Exchange: return to store credit + go to POS to ring
                     the replacement (needs a linked customer). Guards run
                     ON CLICK with a toast saying why — a silently
