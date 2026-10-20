@@ -1,5 +1,6 @@
 import {
   Injectable,
+  OnModuleInit,
   NotFoundException,
   ConflictException,
   BadRequestException,
@@ -12,7 +13,27 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
+  // Roles added after the first seed are created here, once.
+  async onModuleInit(): Promise<void> {
+    try {
+      const exists = await this.roleRepository.findOne({ where: { name: 'price_match' } });
+      if (!exists) {
+        await this.roleRepository.save(
+          this.roleRepository.create({
+            name: 'price_match',
+            displayName: 'Price Match',
+            maxDiscountPercent: 0,
+            canStackDiscounts: false,
+          }),
+        );
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[users] could not create the Price Match role:', err);
+    }
+  }
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,

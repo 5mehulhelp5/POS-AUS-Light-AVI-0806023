@@ -131,19 +131,21 @@ export class ReportsController {
   // ---- Backorders by supplier
   // Sales staff can view backorders (read-only) — Sally, 15 Oct 2026.
   @Get('backorders')
-  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF, RoleNames.PRICE_MATCH)
   @ApiOperation({ summary: 'Open backorder lines grouped by supplier' })
   async backorders() {
     return { success: true, data: await this.reportsService.backorders() };
   }
 
   @Get('backorders/next-po-number')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.PRICE_MATCH)
   @ApiOperation({ summary: 'Next free PO number for a supplier' })
   async nextPoNumber(@Query('supplier') supplier?: string) {
     return { success: true, data: { poNumber: await this.reportsService.nextPoNumber(supplier || '') } };
   }
 
   @Post('backorders/purchase-orders')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.PRICE_MATCH)
   @ApiOperation({ summary: 'Mark backorder lines as ordered from the supplier on a PO' })
   async markPurchaseOrder(
     @Body() body: { supplier?: string; lineIds?: number[]; poNumber?: string },
@@ -155,7 +157,7 @@ export class ReportsController {
   // Supplier names for the pickers — every staff member (custom items at
   // the till need one).
   @Get('suppliers')
-  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF, RoleNames.PRICE_MATCH)
   @ApiOperation({ summary: 'Supplier / brand names, as Backorders groups them' })
   async supplierNames() {
     return { success: true, data: await this.reportsService.supplierNames() };
@@ -163,6 +165,7 @@ export class ReportsController {
 
   // Move a backorder line to another supplier — managers and admins.
   @Post('backorders/lines/:lineId/supplier')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.PRICE_MATCH)
   @ApiOperation({ summary: 'Set the supplier a backorder line is ordered from' })
   async setBackorderSupplier(
     @Param('lineId', ParseIntPipe) lineId: number,
@@ -175,6 +178,7 @@ export class ReportsController {
   // Back to "not ordered" (Sally, 20 Oct 2026) — managers and admins, like
   // creating the PO.
   @Post('backorders/lines/:lineId/unorder')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.PRICE_MATCH)
   @ApiOperation({ summary: 'Take a backorder line off its PO (back to not ordered)' })
   async unmarkPurchaseOrder(@Param('lineId', ParseIntPipe) lineId: number, @CurrentUser() user: any) {
     return { success: true, data: await this.reportsService.unmarkPurchaseOrder(lineId, user) };

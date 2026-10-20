@@ -43,6 +43,14 @@ const staffNavItems = [
   { to: '/reports', label: 'Reports', icon: ChartBarIcon },
 ];
 
+// Price Match (Sally, 20 Oct 2026): checks prices — Products, the Prices
+// page and the full Backorders report, nothing else.
+const priceMatchNavItems = [
+  { to: '/pos', label: 'Products', icon: ShoppingCartIcon },
+  { to: '/competitor-prices', label: 'Prices', icon: CurrencyDollarIcon },
+  { to: '/reports', label: 'Backorders', icon: ChartBarIcon },
+];
+
 const adminNavItems = [
   { to: '/competitor-prices', label: 'Prices', icon: CurrencyDollarIcon },
   { to: '/settings', label: 'Settings', icon: Cog6ToothIcon },
@@ -117,6 +125,7 @@ export default function MainLayout() {
 
   const isAdmin = user?.role.name === 'admin';
   const isManagerOrAdmin = user?.role.name === 'admin' || user?.role.name === 'manager';
+  const isPriceMatch = user?.role.name === 'price_match';
 
   return (
     <div className="flex h-screen bg-pos-bg">
@@ -129,7 +138,7 @@ export default function MainLayout() {
 
         {/* Navigation */}
         <nav className="flex-1 py-2 space-y-1 overflow-y-auto">
-          {navItems.map((item) => (
+          {(isPriceMatch ? priceMatchNavItems : navItems).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -146,7 +155,7 @@ export default function MainLayout() {
             </NavLink>
           ))}
 
-          {(isManagerOrAdmin ? managerNavItems : staffNavItems).map((item) => (
+          {(isPriceMatch ? [] : isManagerOrAdmin ? managerNavItems : staffNavItems).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

@@ -46,6 +46,14 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Prices page: admins and Price Match (Sally, 20 Oct 2026).
+function PricesRoute({ children }: { children: React.ReactNode }) {
+  const { user, isAuthenticated } = useSelector((state: RootState) => state.auth);
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.role.name !== 'admin' && user?.role.name !== 'price_match') return <Navigate to="/pos" replace />;
+  return <>{children}</>;
+}
+
 function App() {
   return (
     <Routes>
@@ -84,9 +92,9 @@ function App() {
         <Route
           path="/competitor-prices"
           element={
-            <AdminRoute>
+            <PricesRoute>
               <PriceWatchPage />
-            </AdminRoute>
+            </PricesRoute>
           }
         />
       </Route>

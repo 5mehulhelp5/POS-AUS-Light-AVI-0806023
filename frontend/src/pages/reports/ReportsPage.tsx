@@ -49,14 +49,26 @@ const STAFF_TABS: Tab[] = ['summary', 'items', 'staff', 'backorders'];
 
 export default function ReportsPage() {
   const me = useSelector((s: RootState) => s.auth.user);
-  const isStaff = me?.role?.name !== 'admin' && me?.role?.name !== 'manager';
-  const visibleTabs = isStaff ? TABS.filter((t) => STAFF_TABS.includes(t.id)) : TABS;
+  // Price Match: Backorders only, with no restrictions (Sally, 20 Oct 2026).
+  const isPriceMatch = me?.role?.name === 'price_match';
+  const isStaff = !isPriceMatch && me?.role?.name !== 'admin' && me?.role?.name !== 'manager';
+  const visibleTabs = isPriceMatch
+    ? TABS.filter((t) => t.id === 'backorders')
+    : isStaff
+      ? TABS.filter((t) => STAFF_TABS.includes(t.id))
+      : TABS;
   // Coming back from an order opened on the Backorders tab lands on
   // Backorders again (Sally, 16 Oct 2026).
   const location = useLocation();
   const wantTab = (location.state as { tab?: Tab } | null)?.tab;
   const [tab, setTab] = useState<Tab>(
-    wantTab && visibleTabs.some((t) => t.id === wantTab) ? wantTab : isStaff ? 'summary' : 'eod',
+    wantTab && visibleTabs.some((t) => t.id === wantTab)
+      ? wantTab
+      : isPriceMatch
+        ? 'backorders'
+        : isStaff
+          ? 'summary'
+          : 'eod',
   );
   const [preset, setPreset] = useState<Preset>('this_month');
   const [range, setRange] = useState(() => presetRange('this_month'));

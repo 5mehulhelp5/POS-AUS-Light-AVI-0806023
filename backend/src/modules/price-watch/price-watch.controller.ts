@@ -11,7 +11,7 @@ import { PriceWatchService } from './price-watch.service';
 @ApiTags('price-watch')
 @Controller('price-watch')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(RoleNames.ADMIN)
+@Roles(RoleNames.ADMIN, RoleNames.PRICE_MATCH)
 @ApiBearerAuth()
 export class PriceWatchController {
   constructor(private readonly priceWatchService: PriceWatchService) {}
@@ -79,6 +79,7 @@ export class PriceWatchController {
   // Avi; deliberately no button in Sally's UI — the weekly cron is the
   // normal path). Fire-and-forget: the scrape takes ~15 minutes.
   @Post('run')
+  @Roles(RoleNames.ADMIN)
   @ApiOperation({ summary: 'Start a scrape run now (admin, background)' })
   async run() {
     if (this.priceWatchService.isRunning()) {

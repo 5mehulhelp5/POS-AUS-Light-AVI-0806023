@@ -98,6 +98,8 @@ export default function ProductDetailModal({
   const authUser = useSelector((st: RootState) => st.auth.user);
   const canManagePrices =
     authUser?.role?.name === 'admin' || authUser?.role?.name === 'manager';
+  // Cost can also be set by Price Match (Sally, 20 Oct 2026).
+  const canEditCost = canManagePrices || authUser?.role?.name === 'price_match';
   const [editingTrade, setEditingTrade] = useState(false);
   const [tradeInput, setTradeInput] = useState('');
   const [tradeSaving, setTradeSaving] = useState(false);
@@ -486,7 +488,7 @@ export default function ProductDetailModal({
               {/* No cost loaded for this product (about a third of the
                   range, Sally 1 Oct 2026) — let managers/admins add one
                   here instead of waiting for the next price-list import. */}
-              {product.cost == null && canManagePrices && !editingCost && (
+              {product.cost == null && canEditCost && !editingCost && (
                 <button
                   type="button"
                   className="text-xs font-bold px-2 py-0.5 rounded bg-gray-600/20 text-gray-400 border border-dashed border-gray-500/60 inline-flex items-center gap-1 hover:border-primary-400 hover:text-primary-300"

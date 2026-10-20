@@ -132,7 +132,7 @@ export class ProductsController {
   // endpoint below that touches `cost` gates it through this check.
   private canSeeCost(user: any): boolean {
     const roleName = user?.role?.name;
-    return roleName === RoleNames.MANAGER || roleName === RoleNames.ADMIN;
+    return roleName === RoleNames.MANAGER || roleName === RoleNames.ADMIN || roleName === RoleNames.PRICE_MATCH;
   }
 
   // findOne/findByBarcode/findBySku return the raw TypeORM entity rather
@@ -358,7 +358,7 @@ export class ProductsController {
   // see cost. Send null to clear it.
   @Patch(':id/cost')
   @UseGuards(RolesGuard)
-  @Roles(RoleNames.ADMIN, RoleNames.MANAGER)
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.PRICE_MATCH)
   @ApiOperation({ summary: 'Update the supplier cost (inc GST) of a product' })
   async updateCost(
     @Param('id', ParseIntPipe) id: number,
