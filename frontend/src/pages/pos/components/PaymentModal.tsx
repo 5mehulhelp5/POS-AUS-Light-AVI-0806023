@@ -885,7 +885,7 @@ export default function PaymentModal({
               unitPrice: item.unitPrice,
               priceEdited: !!item.priceEdited,
               ...(isCustom
-                ? { isCustom: true, sku: item.sku, name: item.name }
+                ? { isCustom: true, sku: item.sku, name: item.name, supplier: item.supplier }
                 : {}),
             };
           }),

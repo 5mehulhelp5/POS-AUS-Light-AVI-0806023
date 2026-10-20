@@ -5,6 +5,7 @@ import { DayClose } from './entities/day-close.entity';
 import { PurchaseOrder } from './entities/purchase-order.entity';
 import { OrderEvent } from '../orders/entities/order-event.entity';
 import { User } from '../users/entities/user.entity';
+import { cleanSupplierName } from './supplier-name';
 
 // ---------------------------------------------------------------------
 // Reporting (Sally, Oct 2026). All money is GST-inclusive as stored
@@ -650,7 +651,7 @@ export class ReportsService {
               oi.product_id productId, oi.sku, oi.name,
               LEAST(COALESCE(oi.backorder_qty, oi.quantity), oi.quantity - COALESCE(rq.q, 0)) qty,
               oi.row_total rowTotal, oi.quantity origQty, o.source, o.internal_notes internalNotes,
-              oi.po_number poNumber, oi.po_sent_at poSentAt, c.email, o.customer_id customerId,
+              oi.po_number poNumber, oi.po_sent_at poSentAt, c.email, o.customer_id customerId, oi.supplier lineSupplier,
               p.cost productCost, oi.cost_price lineCost,
               (SELECT sc.supplier FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listSupplier,
               (SELECT sc.cost_inc_gst FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listCost,
@@ -670,21 +671,15 @@ export class ReportsService {
     const now = Date.now();
     // One name per supplier: "Havit Lighting - Major Stockist in
     // Victoria", "Havit Lighting" and "Havit" all group as "Havit".
-    // Brands bought through another supplier group under that supplier
-    // (Lucy, 16 Oct 2026: "anything that's an Aeratron fan basically, that
-    // is Calibo"; Sally, 20 Oct 2026: Nordlux is ordered through Form).
-    const SUPPLIER_OF: Record<string, string> = { aeratron: 'Calibo', nordlux: 'Form' };
-    const clean = (s: string | null): string => {
-      let v = (s || '').replace(/\s+-\s+.*$/, '').trim();
-      v = v.replace(/\s+(lighting|fans|lamps|costprice|for trade)$/i, '').trim();
-      v = SUPPLIER_OF[v.toLowerCase()] || v;
-      return v ? v.charAt(0).toUpperCase() + v.slice(1) : '';
-    };
+    const clean = cleanSupplierName;
     const groups = new Map<string, any>();
     for (const x of rows) {
       // No guessing from the product name: custom items ("12W driver")
       // and products on no supplier list go under Unknown supplier.
-      const supplier = clean(x.listSupplier) || clean(x.brandCategory) || 'Unknown supplier';
+      // A supplier set on the line itself (custom item at the till, or
+      // moved on this report) wins (Sally, 20 Oct 2026).
+      const supplier =
+        clean(x.lineSupplier) || clean(x.listSupplier) || clean(x.brandCategory) || 'Unknown supplier';
       const qty = n(x.qty);
       const unit = n(x.origQty) ? n(x.rowTotal) / n(x.origQty) : 0;
       // What it costs to order in, ex GST — wholesalers' minimum orders
@@ -849,6 +844,49 @@ export class ReportsService {
       }
       return { poNumber, lines: lines.length, orders: byOrder.size };
     });
+  }
+
+  // Supplier names for the pickers: every supplier price list and brand,
+  // cleaned the same way the Backorders report groups them.
+  async supplierNames(): Promise<string[]> {
+    const rows: Array<{ n: string }> = await this.dataSource.query(
+      `SELECT DISTINCT supplier n FROM supplier_costs
+        UNION
+       SELECT DISTINCT c.name n FROM categories c JOIN categories par ON par.id = c.parent_id AND par.name = 'Brands'`,
+    );
+    const names = new Map<string, string>();
+    for (const r of rows) {
+      const v = cleanSupplierName(r.n);
+      if (v && !names.has(v.toLowerCase())) names.set(v.toLowerCase(), v);
+    }
+    return [...names.values()].sort((a, b) => a.localeCompare(b));
+  }
+
+  // Move a backorder line to another supplier (Sally, 20 Oct 2026: custom
+  // items piling up under "Unknown supplier" — "Pico glass ... we know
+  // that's Vencha"). Logged on the order.
+  async setBackorderSupplier(lineId: number, supplier: string, user: { id: number }) {
+    const name = cleanSupplierName(String(supplier || '').trim()).slice(0, 120);
+    if (!name) throw new BadRequestException('Pick a supplier');
+    const rows: Array<{ id: number; orderId: number; sku: string; quantity: number }> = await this.dataSource.query(
+      `SELECT id, order_id orderId, sku, quantity FROM order_items
+        WHERE id = ? AND is_backorder = 1 AND backorder_fulfilled_at IS NULL`,
+      [lineId],
+    );
+    const line = rows[0];
+    if (!line) throw new BadRequestException('That line is not an open backorder');
+    await this.dataSource.query(`UPDATE order_items SET supplier = ? WHERE id = ?`, [name, lineId]);
+    const u = await this.dataSource.getRepository(User).findOne({ where: { id: user.id } });
+    const who = u ? [u.firstName, u.lastName].filter(Boolean).join(' ') : `user #${user.id}`;
+    await this.dataSource.getRepository(OrderEvent).save(
+      this.dataSource.getRepository(OrderEvent).create({
+        orderId: Number(line.orderId),
+        userId: user.id,
+        type: 'supplier_set',
+        description: `${Number(line.quantity)}× ${line.sku} set to order from ${name} by ${who}.`,
+      }),
+    );
+    return { lineId, supplier: name };
   }
 
   // Take a back-order line off its PO: back to "not ordered" (Sally,

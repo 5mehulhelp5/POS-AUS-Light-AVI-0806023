@@ -17,7 +17,7 @@ import {
   setProductCost,
   setProductTradePrice,
 } from '../../store/slices/productsSlice';
-import { productsApi, quotesApi } from '../../services/api';
+import { productsApi, quotesApi, reportsApi } from '../../services/api';
 import { useMinMarginPercent, fmtPct } from '../../utils/pricingConfig';
 import {
   addItem,
@@ -147,6 +147,17 @@ export default function POSPage() {
   const [customItemName, setCustomItemName] = useState('');
   const [customItemPrice, setCustomItemPrice] = useState('');
   const [customItemSku, setCustomItemSku] = useState('');
+  // Brand / supplier is mandatory on a custom item (Sally, 20 Oct 2026:
+  // custom lights were piling up under "Unknown supplier" on Backorders).
+  const [customItemSupplier, setCustomItemSupplier] = useState('');
+  const [supplierNames, setSupplierNames] = useState<string[]>([]);
+  useEffect(() => {
+    if (!showCustomItem || supplierNames.length) return;
+    reportsApi
+      .supplierNames()
+      .then((r) => setSupplierNames(r.data?.data || []))
+      .catch(() => setSupplierNames([]));
+  }, [showCustomItem, supplierNames.length]);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 48;
 
@@ -576,6 +587,10 @@ export default function POSPage() {
   const handleAddCustomItem = async () => {
     const price = parseFloat(customItemPrice);
     if (!customItemName.trim() || isNaN(price) || price <= 0) return;
+    if (!customItemSupplier) {
+      toast.error('Pick the brand / supplier of the custom item');
+      return;
+    }
     // Duplicate guard (Sally, 7 Sep): if the typed SKU already exists in
     // the catalogue, block the custom item — it would double the product
     // up and dodge the real price/cost data.
@@ -603,12 +618,14 @@ export default function POSPage() {
         sku: sku || 'CUSTOM',
         name: customItemName.trim(),
         price,
+        supplier: customItemSupplier,
       })
     );
     setShowCustomItem(false);
     setCustomItemName('');
     setCustomItemPrice('');
     setCustomItemSku('');
+    setCustomItemSupplier('');
   };
 
   const handleCheckout = () => {
@@ -1292,11 +1309,26 @@ export default function POSPage() {
                   onChange={(e) => setCustomItemSku(e.target.value)}
                 />
               </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Brand / Supplier *</label>
+                <select
+                  className="input"
+                  value={customItemSupplier}
+                  onChange={(e) => setCustomItemSupplier(e.target.value)}
+                >
+                  <option value="">{supplierNames.length ? 'Pick the brand…' : 'Loading…'}</option>
+                  {supplierNames.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <button
               className="btn-primary w-full"
               onClick={handleAddCustomItem}
-              disabled={!customItemName.trim() || !customItemPrice || parseFloat(customItemPrice) <= 0}
+              disabled={
+                !customItemName.trim() || !customItemPrice || parseFloat(customItemPrice) <= 0 || !customItemSupplier
+              }
             >
               Add to Cart
             </button>

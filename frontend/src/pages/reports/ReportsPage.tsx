@@ -886,6 +886,24 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
     setPoFor({ supplier: g.supplier, lines });
   };
 
+  // Move a line to the supplier it's really ordered from (Sally, 20 Oct
+  // 2026: "Pico glass ... we know that's Vencha").
+  const [supplierNames, setSupplierNames] = useState<string[]>([]);
+  useEffect(() => {
+    if (readOnly) return;
+    reportsApi.supplierNames().then((r) => setSupplierNames(r.data?.data || [])).catch(() => undefined);
+  }, [readOnly]);
+  const moveSupplier = async (l: BoLine, to: string) => {
+    if (!to) return;
+    try {
+      await reportsApi.setBackorderSupplier(l.lineId, to);
+      toast.success(`${l.sku} moved to ${to}`);
+      reload();
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+  };
+
   const unorder = async (l: BoLine) => {
     if (!window.confirm(
       `Take ${l.qty}× ${l.sku} (${l.orderNumber}) off PO ${l.poNumber}?\n\n` +
@@ -950,6 +968,26 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
     { key: 'p', label: 'Phone', value: (r) => formatPhone(r.phone) },
     { key: 'sku', label: 'SKU', value: (r) => r.sku },
     { key: 'n', label: 'Product', value: (r) => r.name },
+    ...(readOnly
+      ? []
+      : [
+          {
+            key: 'mv', label: 'Supplier', value: () => '',
+            render: (r: BoLine) => (
+              <select
+                className="input py-0.5 px-1 text-xs w-32"
+                value=""
+                title="Move this line to another supplier"
+                onChange={(e) => moveSupplier(r, e.target.value)}
+              >
+                <option value="">Move to…</option>
+                {supplierNames.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            ),
+          } as Col<BoLine>,
+        ]),
     { key: 'q', label: 'Qty', align: 'right', value: (r) => r.qty },
     {
       key: 'uc', label: 'Unit cost ex GST', align: 'right', value: (r) => r.unitCostEx ?? '',

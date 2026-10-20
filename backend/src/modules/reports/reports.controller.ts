@@ -152,6 +152,26 @@ export class ReportsController {
     return { success: true, data: await this.reportsService.markPurchaseOrder(body, user) };
   }
 
+  // Supplier names for the pickers — every staff member (custom items at
+  // the till need one).
+  @Get('suppliers')
+  @Roles(RoleNames.ADMIN, RoleNames.MANAGER, RoleNames.SALES_STAFF)
+  @ApiOperation({ summary: 'Supplier / brand names, as Backorders groups them' })
+  async supplierNames() {
+    return { success: true, data: await this.reportsService.supplierNames() };
+  }
+
+  // Move a backorder line to another supplier — managers and admins.
+  @Post('backorders/lines/:lineId/supplier')
+  @ApiOperation({ summary: 'Set the supplier a backorder line is ordered from' })
+  async setBackorderSupplier(
+    @Param('lineId', ParseIntPipe) lineId: number,
+    @Body() body: { supplier?: string },
+    @CurrentUser() user: any,
+  ) {
+    return { success: true, data: await this.reportsService.setBackorderSupplier(lineId, String(body?.supplier || ''), user) };
+  }
+
   // Back to "not ordered" (Sally, 20 Oct 2026) — managers and admins, like
   // creating the PO.
   @Post('backorders/lines/:lineId/unorder')

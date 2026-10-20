@@ -415,6 +415,10 @@ export const reportsApi = {
     api.get('/reports/backorders/next-po-number', { params: { supplier } }),
   markPurchaseOrder: (data: { supplier: string; lineIds: number[]; poNumber?: string }) =>
     api.post('/reports/backorders/purchase-orders', data),
+  // Supplier / brand names (custom items, moving a backorder line).
+  supplierNames: () => api.get('/reports/suppliers'),
+  setBackorderSupplier: (lineId: number, supplier: string) =>
+    api.post(`/reports/backorders/lines/${lineId}/supplier`, { supplier }),
 };
 
 export interface ReportRange {

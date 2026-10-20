@@ -78,6 +78,9 @@ interface CreateOrderDto {
     isCustom?: boolean;
     sku?: string;
     name?: string;
+    // Brand / supplier picked for a custom item (Sally, 20 Oct 2026), so
+    // its back order lands under the right supplier.
+    supplier?: string;
   }>;
   cartDiscount?: {
     type: 'percent' | 'fixed';
@@ -397,6 +400,11 @@ export class OrdersService {
     // to exceed available stock and stock isn't deducted until fulfilment.
     // For partial backorders ("ordered 4, take 2, backorder 2") only the
     // take-now portion needs to be in stock right now.
+    const supplierByProductId = new Map<number, string>();
+    for (const item of dto.items) {
+      const sup = String(item.supplier || '').trim().slice(0, 120);
+      if (sup) supplierByProductId.set(item.productId, sup);
+    }
     const isBackorderByProductId = new Map<number, boolean>();
     const isLaybyHeldByProductId = new Map<number, boolean>();
     const backorderQtyByProductId = new Map<number, number>();
@@ -787,6 +795,7 @@ export class OrdersService {
             costPrice: product?.cost || null,
             isBackorder: flagBackorder,
             isLaybyHeld: flagHeld && !flagBackorder,
+            supplier: supplierByProductId.get(calcItem.productId) ?? null,
           });
           await queryRunner.manager.save(orderItem);
 

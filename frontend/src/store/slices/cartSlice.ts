@@ -4,6 +4,9 @@ export interface CartItem {
   productId: number;
   sku: string;
   name: string;
+  // Brand / supplier of a custom item (Sally, 20 Oct 2026), so its back
+  // order lands under the right supplier.
+  supplier?: string;
   quantity: number;
   unitPrice: number;
   // What the cashier typed (manual override). Effective discount is
@@ -199,12 +202,14 @@ const cartSlice = createSlice({
         // customer-price-wins rule (see CartItem comments).
         retailSalePrice?: number;
         tradeBasePrice?: number;
+        supplier?: string;
       }>
     ) => {
       const {
         productId,
         sku,
         name,
+        supplier,
         price,
         imageUrl,
         isSaleItem,
@@ -238,6 +243,7 @@ const cartSlice = createSlice({
           isBackorder,
           retailSalePrice,
           tradeBasePrice,
+          ...(supplier ? { supplier } : {}),
         });
       }
 

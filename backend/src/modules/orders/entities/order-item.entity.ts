@@ -87,6 +87,13 @@ export class OrderItem {
   @Column({ name: 'backorder_qty', type: 'int', unsigned: true, nullable: true })
   backorderQty: number | null;
 
+  // Who this line is ordered from, when set by hand: the Brand / Supplier
+  // picked for a custom item at the till, or a backorder line moved to a
+  // supplier on Reports > Backorders (Sally, 20 Oct 2026). Null = worked
+  // out from the supplier price lists / brand.
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  supplier: string | null;
+
   // The purchase order this backorder line was ordered from the supplier
   // on (Reports > Backorders, "Mark as sent", Sally 15 Oct 2026). Null =
   // not ordered yet.
