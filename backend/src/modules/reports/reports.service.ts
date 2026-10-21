@@ -5,7 +5,7 @@ import { DayClose } from './entities/day-close.entity';
 import { PurchaseOrder } from './entities/purchase-order.entity';
 import { OrderEvent } from '../orders/entities/order-event.entity';
 import { User } from '../users/entities/user.entity';
-import { cleanSupplierName } from './supplier-name';
+import { cleanSupplierName, ALWAYS_LISTED_SUPPLIERS } from './supplier-name';
 
 // ---------------------------------------------------------------------
 // Reporting (Sally, Oct 2026). All money is GST-inclusive as stored
@@ -855,8 +855,8 @@ export class ReportsService {
        SELECT DISTINCT c.name n FROM categories c JOIN categories par ON par.id = c.parent_id AND par.name = 'Brands'`,
     );
     const names = new Map<string, string>();
-    for (const r of rows) {
-      const v = cleanSupplierName(r.n);
+    for (const n of [...rows.map((r) => r.n), ...ALWAYS_LISTED_SUPPLIERS]) {
+      const v = cleanSupplierName(n);
       if (v && !names.has(v.toLowerCase())) names.set(v.toLowerCase(), v);
     }
     return [...names.values()].sort((a, b) => a.localeCompare(b));
