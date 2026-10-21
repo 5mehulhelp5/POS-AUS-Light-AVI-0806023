@@ -63,6 +63,17 @@ export class Product {
   @Column({ type: 'decimal', precision: 12, scale: 4, nullable: true })
   cost: number | null;
 
+  // Supplier quantity-break cost (inc GST, like `cost`): what we pay per
+  // unit when ordering at least `bulkMinQty` (EGLO, Sally 22 Oct 2026:
+  // e.g. $86.90 for 1-5, $82.50 for 6+). `cost` stays the small-order
+  // price — the margin check and reports use it; purchase orders use the
+  // bulk price once the quantity reaches the break.
+  @Column({ name: 'bulk_cost', type: 'decimal', precision: 12, scale: 4, nullable: true })
+  bulkCost: number | null;
+
+  @Column({ name: 'bulk_min_qty', type: 'int', unsigned: true, nullable: true })
+  bulkMinQty: number | null;
+
   // Fixed trade price for this product (Sally, 29 Sep 2026: "implement
   // the proper per-product trade price"). When set, it replaces the
   // percentage trade rules for this product only. POS-only — the

@@ -652,7 +652,7 @@ export class ReportsService {
               LEAST(COALESCE(oi.backorder_qty, oi.quantity), oi.quantity - COALESCE(rq.q, 0)) qty,
               oi.row_total rowTotal, oi.quantity origQty, o.source, o.internal_notes internalNotes,
               oi.po_number poNumber, oi.po_sent_at poSentAt, c.email, o.customer_id customerId, oi.supplier lineSupplier,
-              p.cost productCost, oi.cost_price lineCost,
+              p.cost productCost, oi.cost_price lineCost, p.bulk_cost bulkCost, p.bulk_min_qty bulkMinQty,
               (SELECT sc.supplier FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listSupplier,
               (SELECT sc.cost_inc_gst FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listCost,
               (SELECT cat.name FROM product_categories pc JOIN categories cat ON cat.id = pc.category_id
@@ -711,6 +711,13 @@ export class ReportsService {
         value: r2(unit * qty),
         unitCostEx,
         costEx: unitCostEx != null ? r2(unitCostEx * qty) : null,
+        // Quantity-break cost (EGLO): applied below when this supplier's
+        // open lines for the SKU reach the break; the PO screen re-checks
+        // against the lines actually put on the PO.
+        standardCostEx: unitCostEx,
+        bulkCostEx: x.bulkCost != null && Number(x.bulkCost) > 0 ? r2(Number(x.bulkCost) / 1.1) : null,
+        bulkMinQty: x.bulkMinQty != null ? Number(x.bulkMinQty) : null,
+        bulkApplied: false,
         // Ordered from the supplier yet? (Sally, 15 Oct 2026)
         poNumber: x.poNumber || null,
         poSentAt: x.poSentAt ? new Date(x.poSentAt).toISOString() : null,
@@ -726,6 +733,22 @@ export class ReportsService {
       if (line.costEx != null) g.costEx = r2(g.costEx + line.costEx);
       else g.linesWithoutCost++;
       groups.set(key, g);
+    }
+    for (const g of groups.values()) {
+      const qtyBySku = new Map<string, number>();
+      for (const l of g.lines) qtyBySku.set(l.sku, (qtyBySku.get(l.sku) || 0) + l.qty);
+      let changed = false;
+      for (const l of g.lines) {
+        if (l.bulkCostEx != null && l.bulkMinQty && (qtyBySku.get(l.sku) || 0) >= l.bulkMinQty) {
+          l.unitCostEx = l.bulkCostEx;
+          l.costEx = r2(l.bulkCostEx * l.qty);
+          l.bulkApplied = true;
+          changed = true;
+        }
+      }
+      if (changed) {
+        g.costEx = r2(g.lines.reduce((s: number, l: any) => s + (l.costEx || 0), 0));
+      }
     }
     const list = [...groups.values()].sort((a, b) =>
       a.supplier === 'Unknown supplier' ? 1 : b.supplier === 'Unknown supplier' ? -1 : a.supplier.localeCompare(b.supplier),

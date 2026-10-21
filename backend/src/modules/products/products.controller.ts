@@ -140,7 +140,7 @@ export class ProductsController {
   // for anyone who isn't allowed to see it.
   private hideCostIfNeeded(product: Product, canSeeCost: boolean): Product {
     if (canSeeCost) return product;
-    const { cost, ...rest } = product;
+    const { cost, bulkCost, bulkMinQty, ...rest } = product;
     return rest as Product;
   }
 

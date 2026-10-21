@@ -37,6 +37,10 @@ export interface PoSourceLine {
   name: string;
   qty: number;
   unitCostEx: number | null;
+  // Quantity-break cost: used when the PO's total for the SKU reaches the
+  // break (EGLO, Sally 22 Oct 2026).
+  bulkCostEx?: number | null;
+  bulkMinQty?: number | null;
   customer: string;
   company: string | null;
   orderNumber: string;
@@ -69,14 +73,25 @@ const num = (s: string): number => {
 };
 
 let nextKey = 1;
-const toLine = (l: PoSourceLine): PoLine => ({
-  key: nextKey++,
-  lineId: l.lineId,
-  qty: String(l.qty),
-  description: !l.sku || /^custom$/i.test(l.sku) ? l.name : `${l.sku} — ${l.name}`,
-  cost: l.unitCostEx != null ? l.unitCostEx.toFixed(2) : '',
-  reference: `${l.company || l.customer} ${l.orderNumber}`.trim(),
-});
+const toLine = (l: PoSourceLine, qtyOnPo: number): PoLine => {
+  const bulk = l.bulkCostEx != null && !!l.bulkMinQty && qtyOnPo >= l.bulkMinQty;
+  const cost = bulk ? l.bulkCostEx! : l.unitCostEx;
+  return {
+    key: nextKey++,
+    lineId: l.lineId,
+    qty: String(l.qty),
+    description: !l.sku || /^custom$/i.test(l.sku) ? l.name : `${l.sku} — ${l.name}`,
+    cost: cost != null ? cost.toFixed(2) : '',
+    reference: `${l.company || l.customer} ${l.orderNumber}`.trim(),
+  };
+};
+// Bulk price when the PO orders at least the break quantity of a SKU
+// across its lines.
+const toLines = (source: PoSourceLine[]): PoLine[] => {
+  const qtyBySku = new Map<string, number>();
+  for (const l of source) qtyBySku.set(l.sku, (qtyBySku.get(l.sku) || 0) + Number(l.qty || 0));
+  return source.map((l) => toLine(l, qtyBySku.get(l.sku) || 0));
+};
 const blankLine = (): PoLine => ({ key: nextKey++, qty: '1', description: '', cost: '', reference: '' });
 
 export default function PurchaseOrderEditor({
@@ -116,7 +131,7 @@ export default function PurchaseOrderEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplier]);
-  const [lines, setLines] = useState<PoLine[]>(() => source.map(toLine));
+  const [lines, setLines] = useState<PoLine[]>(() => toLines(source));
   const [printing, setPrinting] = useState(false);
   const [busy, setBusy] = useState(false);
 

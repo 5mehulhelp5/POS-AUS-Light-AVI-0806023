@@ -775,6 +775,8 @@ type BoLine = {
   // Ordered from the supplier on this PO (Sally, 15 Oct 2026). Null = not yet.
   poNumber: string | null; poSentAt: string | null;
   source?: 'pos' | 'magento' | 'legacy';
+  // Supplier quantity-break cost (EGLO, 22 Oct 2026).
+  standardCostEx?: number | null; bulkCostEx?: number | null; bulkMinQty?: number | null; bulkApplied?: boolean;
 };
 type BoGroup = { supplier: string; lines: BoLine[]; units: number; value: number; costEx: number; linesWithoutCost: number };
 
@@ -1003,7 +1005,22 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
     { key: 'q', label: 'Qty', align: 'right', value: (r) => r.qty },
     {
       key: 'uc', label: 'Unit cost ex GST', align: 'right', value: (r) => r.unitCostEx ?? '',
-      render: (r) => (r.unitCostEx != null ? money(r.unitCostEx) : <span className="text-gray-500">—</span>),
+      render: (r) =>
+        r.unitCostEx != null ? (
+          <span className="whitespace-nowrap">
+            {money(r.unitCostEx)}
+            {r.bulkApplied && (
+              <span
+                className="ml-1 px-1 rounded text-[9px] font-bold uppercase bg-green-600/20 text-green-500"
+                title={`Bulk buy price — ${r.bulkMinQty}+ on order (normally ${money(r.standardCostEx ?? null)})`}
+              >
+                bulk
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="text-gray-500">—</span>
+        ),
     },
     {
       key: 'tc', label: 'Cost ex GST', align: 'right', value: (r) => r.costEx ?? '',
@@ -1225,7 +1242,9 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
                 sku: l.sku,
                 name: l.name,
                 qty: l.qty,
-                unitCostEx: l.unitCostEx,
+                unitCostEx: l.standardCostEx ?? l.unitCostEx,
+                bulkCostEx: l.bulkCostEx ?? null,
+                bulkMinQty: l.bulkMinQty ?? null,
                 customer: l.customer,
                 company: l.company,
                 orderNumber: l.orderNumber,
