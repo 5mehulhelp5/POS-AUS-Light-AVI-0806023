@@ -1485,6 +1485,10 @@ export class OrdersService {
         let productId: number | null = null;
         let cost: number | null = null;
         let approvedPrice: number | null = null;
+        // A line already on the order keeps the price it was sold at;
+        // only a new line takes today's price (Sally, 22 Oct 2026: deleting
+        // one light re-priced the others).
+        let keepSoldPrice = false;
 
         if (item.isCustom || item.productId <= 0) {
           const p = Number(item.unitPrice);
@@ -1515,11 +1519,25 @@ export class OrdersService {
             : Number(product.price);
           // Backorder/quote-conversion allow a manual override; catalogue
           // lines must sell at the DB price.
-          unitPrice =
-            item.isBackorder && item.unitPrice != null && item.unitPrice >= 0
-              ? Number(item.unitPrice)
-              : base;
+          const typedBackorderPrice =
+            item.isBackorder && item.unitPrice != null && item.unitPrice >= 0;
+          unitPrice = typedBackorderPrice ? Number(item.unitPrice) : base;
+          keepSoldPrice = !typedBackorderPrice;
         }
+
+        // Same product (or same custom line) and same back-order flag on the
+        // order before the edit: keep its price, PO, received date, supplier
+        // and the cost it was sold at.
+        const isBack = !!item.isBackorder;
+        const prevIdx = oldItems.findIndex(
+          (o) =>
+            !usedOld.has(o.id) &&
+            !!o.isBackorder === isBack &&
+            (productId ? o.productId === productId : !o.productId && o.sku === sku && o.name === name),
+        );
+        const prev = prevIdx >= 0 ? oldItems[prevIdx] : null;
+        if (prev) usedOld.add(prev.id);
+        if (keepSoldPrice && prev) unitPrice = Number(prev.unitPrice);
 
         const discountPct = Math.max(0, Math.min(100, item.discountPercent || 0));
 
@@ -1550,19 +1568,6 @@ export class OrdersService {
 
         subtotal += rowTotal;
         itemDiscounts += lineDiscount;
-
-        // Same product (or same custom line) and same back-order flag on the
-        // order before the edit: keep its PO, received date, supplier and
-        // the cost it was sold at.
-        const isBack = !!item.isBackorder;
-        const prevIdx = oldItems.findIndex(
-          (o) =>
-            !usedOld.has(o.id) &&
-            !!o.isBackorder === isBack &&
-            (productId ? o.productId === productId : !o.productId && o.sku === sku && o.name === name),
-        );
-        const prev = prevIdx >= 0 ? oldItems[prevIdx] : null;
-        if (prev) usedOld.add(prev.id);
 
         persistedItems.push({
           orderId: order.id,
