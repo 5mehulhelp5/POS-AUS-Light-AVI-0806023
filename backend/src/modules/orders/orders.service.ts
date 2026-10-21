@@ -1442,6 +1442,24 @@ export class OrdersService {
       if (!items || items.length === 0) {
         throw new BadRequestException('Order must have at least one item');
       }
+      // The lines as they were — for the history note and to carry each
+      // line's PO / received / supplier / cost details over. They must not
+      // stay on `order`: saving the order with them attached made TypeORM
+      // detach the new lines (order_id = NULL), so every edit failed with
+      // "internal error" (Sally, 22 Oct 2026, POS-0313).
+      const oldItems: OrderItem[] = order.items || [];
+      delete (order as Partial<Order>).items;
+      if (oldItems.length) {
+        const refunded = await manager.query(
+          `SELECT COUNT(*) n FROM refund_items WHERE order_item_id IN (?)`,
+          [oldItems.map((i) => i.id)],
+        );
+        if (Number(refunded?.[0]?.n) > 0) {
+          throw new BadRequestException(
+            'This order has a refund on it, so its items can\'t be edited — use Refund / Exchange instead',
+          );
+        }
+      }
 
       // Resolve catalogue products for non-custom lines
       const catalogueIds = items
@@ -1458,6 +1476,7 @@ export class OrdersService {
       let subtotal = 0;
       let itemDiscounts = 0;
       const persistedItems: Partial<OrderItem>[] = [];
+      const usedOld = new Set<number>();
       for (const item of items) {
         const qty = Math.max(1, Math.floor(Number(item.quantity) || 0));
         let sku = item.sku || 'CUSTOM';
@@ -1532,6 +1551,19 @@ export class OrdersService {
         subtotal += rowTotal;
         itemDiscounts += lineDiscount;
 
+        // Same product (or same custom line) and same back-order flag on the
+        // order before the edit: keep its PO, received date, supplier and
+        // the cost it was sold at.
+        const isBack = !!item.isBackorder;
+        const prevIdx = oldItems.findIndex(
+          (o) =>
+            !usedOld.has(o.id) &&
+            !!o.isBackorder === isBack &&
+            (productId ? o.productId === productId : !o.productId && o.sku === sku && o.name === name),
+        );
+        const prev = prevIdx >= 0 ? oldItems[prevIdx] : null;
+        if (prev) usedOld.add(prev.id);
+
         persistedItems.push({
           orderId: order.id,
           productId,
@@ -1543,8 +1575,14 @@ export class OrdersService {
           discountAmount: lineDiscount,
           taxAmount: rowTax,
           rowTotal,
-          isBackorder: !!item.isBackorder,
+          isBackorder: isBack,
           isLaybyHeld: !!item.isLaybyHeld && !item.isBackorder,
+          costPrice: prev?.costPrice ?? (cost != null && cost > 0 ? cost : null),
+          poNumber: prev?.poNumber ?? null,
+          poSentAt: prev?.poSentAt ?? null,
+          backorderFulfilledAt: prev?.backorderFulfilledAt ?? null,
+          backorderQty: prev && prev.backorderQty != null && prev.backorderQty < qty ? prev.backorderQty : null,
+          supplier: prev?.supplier ?? null,
         });
       }
 
@@ -1561,21 +1599,22 @@ export class OrdersService {
         await manager.save(manager.create(OrderItem, row));
       }
 
-      order.subtotal = subtotal;
-      order.discountAmount = itemDiscounts;
-      order.taxAmount = taxAmount;
-      order.grandTotal = grandTotal;
       // Recompute payment status against the new total.
       const paid = await this.sumPaidForOrder(order.id);
-      if (paid >= grandTotal - 0.01) {
-        order.paymentStatus = PaymentStatus.PAID;
-      } else if (paid > 0) {
-        order.paymentStatus = PaymentStatus.PARTIAL;
-      } else {
-        order.paymentStatus = PaymentStatus.PENDING;
-      }
-      order.updatedAt = new Date();
-      await manager.save(order);
+      const paymentStatus =
+        paid >= grandTotal - 0.01
+          ? PaymentStatus.PAID
+          : paid > 0
+            ? PaymentStatus.PARTIAL
+            : PaymentStatus.PENDING;
+      await manager.update(Order, { id: order.id }, {
+        subtotal,
+        discountAmount: itemDiscounts,
+        taxAmount,
+        grandTotal,
+        paymentStatus,
+        updatedAt: new Date(),
+      });
 
       // Breadcrumb so pm2 logs show who edited what and how.
       // eslint-disable-next-line no-console
@@ -1606,7 +1645,7 @@ export class OrdersService {
           }
           return m;
         };
-        const before = agg(order.items || []);
+        const before = agg(oldItems);
         const after = agg(persistedItems);
         const changes: string[] = [];
         for (const [sku, a] of after) {
@@ -1647,7 +1686,10 @@ export class OrdersService {
         );
       }
 
-      return (await this.findById(orderId)) as Order;
+      return (await manager.findOne(Order, {
+        where: { id: orderId },
+        relations: ['customer', 'user', 'items', 'payments'],
+      })) as Order;
     });
   }
 
