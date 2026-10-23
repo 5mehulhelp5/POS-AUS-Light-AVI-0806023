@@ -170,6 +170,9 @@ export class SyncService {
   private autoSyncLastRunAt: Date | null = null;
   private autoSyncLastResult: { success: boolean; message: string } | null = null;
   private autoSyncLastDailyDate: string | null = null;
+  // Whether the daily schedule has looked up today's run since start-up
+  // (or since the schedule was changed).
+  private autoSyncDayChecked = false;
 
   async getAutoSyncConfig(): Promise<AutoSyncConfig> {
     const raw = await this.settingsService.getValue<unknown>(AUTO_SYNC_SETTING_KEY, null);
@@ -188,6 +191,7 @@ export class SyncService {
     // Re-arm the daily guard so changing the time today still fires
     // today if the new time is still ahead.
     this.autoSyncLastDailyDate = null;
+    this.autoSyncDayChecked = false;
     this.logger.log(`Auto product sync config updated: ${JSON.stringify(cfg)}`);
     return cfg;
   }
@@ -394,10 +398,26 @@ export class SyncService {
       reason = `every ${cfg.intervalMinutes} min`;
     } else {
       const { time, date } = storeLocalParts(now);
-      if (this.autoSyncLastDailyDate === null && time >= cfg.dailyTime) {
-        // First tick after boot/config change and the slot has already
-        // passed today — treat today as done rather than firing late.
-        this.autoSyncLastDailyDate = date;
+      if (!this.autoSyncDayChecked) {
+        // Once after start-up / a schedule change: did today's run already
+        // happen? Look at the sync log rather than guess. (The old guard
+        // stayed "first tick" all morning after a restart, so at 18:00 it
+        // marked the day done and skipped it — every deploy day lost its
+        // sync, e.g. 22 Oct 2026: Danham special dates never reached the
+        // POS.) If the slot has passed and nothing ran, run now.
+        this.autoSyncDayChecked = true;
+        try {
+          const last = await this.syncLogRepository.findOne({
+            where: { syncType: SyncType.PRODUCTS },
+            order: { id: 'DESC' },
+          });
+          if (last?.startedAt) {
+            const lp = storeLocalParts(new Date(last.startedAt));
+            if (lp.date === date && lp.time >= cfg.dailyTime) this.autoSyncLastDailyDate = date;
+          }
+        } catch (err) {
+          this.logger.warn(`Auto sync: could not read the last product sync (${err})`);
+        }
       }
       due = time >= cfg.dailyTime && this.autoSyncLastDailyDate !== date;
       reason = `daily at ${cfg.dailyTime} ${STORE_TZ}`;
