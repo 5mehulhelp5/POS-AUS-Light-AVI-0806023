@@ -161,6 +161,9 @@ export const ordersApi = {
     api.patch(`/orders/${id}/items/${itemId}/status`, { status }),
   // Void a sale put through by mistake (admin) — out of the reports.
   voidOrder: (id: number, reason: string) => api.post(`/orders/${id}/void`, { reason }),
+  // Customer takes some of the back-order / lay-by items now.
+  collectItems: (id: number, lines: Array<{ itemId: number; qty: number }>) =>
+    api.post(`/orders/${id}/collect`, { lines }),
   // Website orders: Back Order (some or all of a line) / Complete.
   setWebsiteLineStatus: (id: number, itemId: number, status: 'backorder' | 'complete', qty?: number) =>
     api.patch(`/orders/${id}/items/${itemId}/website-status`, { status, qty }),

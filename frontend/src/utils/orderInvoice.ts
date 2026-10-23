@@ -139,8 +139,10 @@ export function buildInvoiceData(o: any, fallbackCustomer?: any, refunds?: any[]
     customerAddress: addr || undefined,
     items,
     subtotal: parseFloat(o.subtotal),
-    itemDiscounts: parseFloat(o.discountAmount || 0),
-    cartDiscount: 0,
+    // Line discounts are already in the line totals; the "Apply Further
+    // Discount" part prints as its own DISCOUNT row (Sally, 23 Oct 2026).
+    itemDiscounts: Math.round(lines.reduce((s: number, l: any) => s + l.discountAmount, 0) * 100) / 100,
+    cartDiscount: Number(o.cartDiscount?.amount || 0),
     taxAmount: parseFloat(o.taxAmount || 0),
     grandTotal: parseFloat(o.grandTotal),
     // Re-prints of orders that included a delivery fee should show the

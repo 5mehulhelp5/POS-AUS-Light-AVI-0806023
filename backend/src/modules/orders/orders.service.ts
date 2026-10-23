@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Brackets, WhereExpressionBuilder } from 'typeorm';
+import { Repository, DataSource, Brackets, WhereExpressionBuilder, EntityManager } from 'typeorm';
 import {
   Order,
   OrderItem,
@@ -1474,6 +1474,7 @@ export class OrdersService {
       // in create() but simpler (no trade auto-discount recompute —
       // whatever the caller sends stands).
       let subtotal = 0;
+      let grossSubtotal = 0;
       let itemDiscounts = 0;
       const persistedItems: Partial<OrderItem>[] = [];
       const usedOld = new Set<number>();
@@ -1567,6 +1568,7 @@ export class OrdersService {
         const rowTax = Math.round((rowTotal / 11) * 100) / 100;
 
         subtotal += rowTotal;
+        grossSubtotal += lineGross;
         itemDiscounts += lineDiscount;
 
         persistedItems.push({
@@ -1592,9 +1594,28 @@ export class OrdersService {
       }
 
       subtotal = Math.round(subtotal * 100) / 100;
-      const taxAmount = Math.round((subtotal / 11) * 100) / 100;
+      // The cart discount ("Apply Further Discount") is on the order, not
+      // on any line, so rebuilding the lines must carry it over — an edit
+      // dropped POS-0342's $385.20 and the reprint billed the full price
+      // (Sally, 23 Oct 2026). A % discount keeps its share of the order; a
+      // $ discount keeps its amount, never more than the order.
+      const cart = await this.getCartDiscount(order, oldItems, manager);
+      const oldBase = oldItems.reduce((t, i) => t + Number(i.rowTotal || 0), 0);
+      let cartDiscount = 0;
+      if (cart.amount > 0) {
+        cartDiscount =
+          cart.percent != null && oldBase > 0
+            ? Math.round(cart.amount * (subtotal / oldBase) * 100) / 100
+            : Math.min(cart.amount, subtotal);
+      }
+      // Stored the way create() stores it: subtotal before any discount,
+      // discountAmount = line + cart discounts.
+      grossSubtotal = Math.round(grossSubtotal * 100) / 100;
+      const totalDiscount = Math.round((itemDiscounts + cartDiscount) * 100) / 100;
+      const goods = Math.round((subtotal - cartDiscount) * 100) / 100;
+      const taxAmount = Math.round((goods / 11) * 100) / 100;
       const grandTotal =
-        Math.round((subtotal + Number(order.deliveryFee || 0)) * 100) / 100;
+        Math.round((goods + Number(order.deliveryFee || 0)) * 100) / 100;
 
       // Wipe existing rows + insert the new set. Simplest correct
       // approach — trying to diff line-by-line would be fragile given
@@ -1613,8 +1634,8 @@ export class OrdersService {
             ? PaymentStatus.PARTIAL
             : PaymentStatus.PENDING;
       await manager.update(Order, { id: order.id }, {
-        subtotal,
-        discountAmount: itemDiscounts,
+        subtotal: grossSubtotal,
+        discountAmount: totalDiscount,
         taxAmount,
         grandTotal,
         paymentStatus,
@@ -1667,6 +1688,9 @@ export class OrdersService {
         }
         for (const [sku, b] of before) {
           if (!after.has(sku)) changes.push(`Removed ${b.qty}× ${b.name}`);
+        }
+        if (Math.abs(cart.amount - cartDiscount) > 0.005) {
+          changes.push(`order discount $${cart.amount.toFixed(2)} → $${cartDiscount.toFixed(2)}`);
         }
         if (changes.length > 0) {
           const editor = await manager.findOne(User, { where: { id: userId } });
@@ -2131,6 +2155,231 @@ export class OrdersService {
   // NOTE: 'paid' on an open backorder line clears the flag WITHOUT the
   // stock decrement that "mark as received" (fulfillBackorderItems)
   // performs — use the green tick when stock has physically arrived.
+  /**
+   * The cart-level part of an order's discount ("Apply Further Discount").
+   * It sits on the order, not on a line — lines keep their own price and
+   * line discount — so it is the order's discount less the lines'.
+   * `percent` is set when it was given as a % (from the discount audit).
+   * POS sales only: website and legacy orders don't store it this way.
+   * Needs the sale's cart entry in the discount audit, so a cent of
+   * rounding between line discounts never reads as a discount.
+   */
+  async getCartDiscount(
+    order: Pick<Order, 'id' | 'discountAmount' | 'source'>,
+    items: Array<{ discountAmount?: number | string | null }>,
+    db: { query: (sql: string, params?: unknown[]) => Promise<any> } = this.dataSource,
+  ): Promise<{ amount: number; percent: number | null }> {
+    if (order.source && order.source !== OrderSource.POS) return { amount: 0, percent: null };
+    const lineDiscounts = items.reduce((t, i) => t + Number(i.discountAmount || 0), 0);
+    const amount = Math.round((Number(order.discountAmount || 0) - lineDiscounts) * 100) / 100;
+    if (amount <= 0.005) return { amount: 0, percent: null };
+    const rows = await db.query(
+      `SELECT discount_percent pct FROM discount_audit_log
+        WHERE order_id = ? AND discount_type = 'cart' ORDER BY id DESC LIMIT 1`,
+      [order.id],
+    );
+    if (!rows?.length) return { amount: 0, percent: null };
+    const pct = Number(rows[0].pct || 0);
+    return { amount, percent: pct > 0 ? pct : null };
+  }
+
+  /**
+   * After a line changes status the order follows its lines. Standard
+   * order: any open back order => BACKORDER_PENDING; none left =>
+   * COMPLETE if paid in full, else PENDING so the balance can be
+   * collected. Lay-by: paid in full with nothing held or on back order =>
+   * COMPLETE. Returns true when it completed a lay-by.
+   */
+  private async refreshStatusFromLines(
+    manager: EntityManager,
+    order: Order,
+    items: OrderItem[],
+  ): Promise<boolean> {
+    const paidSoFar = async (): Promise<number> => {
+      const paidRow = await manager
+        .createQueryBuilder(Payment, 'p')
+        .where('p.orderId = :orderId', { orderId: order.id })
+        .andWhere('p.status = :status', { status: PaymentEntityStatus.COMPLETED })
+        .select('COALESCE(SUM(p.amount), 0)', 'total')
+        .getRawOne();
+      return Number(paidRow?.total || 0);
+    };
+    if (order.orderType !== 'layby') {
+      const openBackorder = items.some((i) => i.isBackorder && !i.backorderFulfilledAt);
+      const movable = new Set<string>([
+        OrderStatus.PENDING,
+        OrderStatus.COMPLETE,
+        OrderStatus.BACKORDER_PENDING,
+      ]);
+      if (movable.has(order.status)) {
+        if (openBackorder) {
+          order.status = OrderStatus.BACKORDER_PENDING;
+        } else {
+          const balanceOwed = (await paidSoFar()) + 0.01 < Number(order.grandTotal);
+          order.status = balanceOwed ? OrderStatus.PENDING : OrderStatus.COMPLETE;
+          if (!balanceOwed) order.paymentStatus = PaymentStatus.PAID;
+        }
+        await manager.update(Order, { id: order.id }, {
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+        });
+      }
+      return false;
+    }
+    if (
+      order.status === OrderStatus.LAYBY_ACTIVE ||
+      order.status === OrderStatus.LAYBY_EXPIRED
+    ) {
+      const stillOpen = items.some(
+        (i) => (i.isBackorder && !i.backorderFulfilledAt) || i.isLaybyHeld,
+      );
+      if (!stillOpen && (await paidSoFar()) + 0.01 >= Number(order.grandTotal)) {
+        order.status = OrderStatus.COMPLETE;
+        order.paymentStatus = PaymentStatus.PAID;
+        await manager.update(Order, { id: order.id }, {
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+        });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The customer takes some of what is still owed on an order — part of
+   * a back order or lay-by (Sally, 23 Oct 2026: POS-0342 ordered 18 of
+   * each, took 2 and will "draw down" more each week; POS-0340 wants 1 of
+   * its 2 fans). Each line given is split: the units taken become a taken
+   * line, the rest stay on back order / lay-by with their PO and
+   * supplier. Prices and the order total don't change.
+   */
+  async collectItems(
+    orderId: number,
+    lines: Array<{ itemId: number; qty: number }>,
+    userId: number,
+  ): Promise<Order> {
+    const wanted = (Array.isArray(lines) ? lines : [])
+      .map((l) => ({ itemId: Number(l?.itemId), qty: Math.floor(Number(l?.qty) || 0) }))
+      .filter((l) => l.qty > 0);
+    if (!wanted.length) {
+      throw new BadRequestException('Enter how many of each item the customer is taking');
+    }
+    if (new Set(wanted.map((l) => l.itemId)).size !== wanted.length) {
+      throw new BadRequestException('Each item can only be listed once');
+    }
+    await this.dataSource.transaction(async (manager) => {
+      const order = await manager.findOne(Order, {
+        where: { id: orderId },
+        relations: ['items'],
+      });
+      if (!order) throw new BadRequestException('Order not found');
+      if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.REFUNDED) {
+        throw new BadRequestException(
+          `Order ${order.orderNumber} is ${order.status} — nothing can be collected`,
+        );
+      }
+      // Kept off `order` so nothing cascades through it (see updateItems).
+      const items: OrderItem[] = order.items || [];
+      delete (order as Partial<Order>).items;
+      const refunded = new Set<number>(
+        (
+          await manager.query(
+            `SELECT DISTINCT order_item_id id FROM refund_items WHERE order_item_id IN (?)`,
+            [wanted.map((w) => w.itemId)],
+          )
+        ).map((r: { id: number | string }) => Number(r.id)),
+      );
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const taken: string[] = [];
+      for (const w of wanted) {
+        const item = items.find((i) => i.id === w.itemId);
+        if (!item) throw new BadRequestException(`Item ${w.itemId} is not on this order`);
+        const open = (item.isBackorder && !item.backorderFulfilledAt) || item.isLaybyHeld;
+        if (!open) throw new BadRequestException(`${item.name} has already been taken`);
+        if (refunded.has(item.id)) {
+          throw new BadRequestException(`${item.name} has a refund on it — use Refund / Exchange instead`);
+        }
+        if (w.qty > item.quantity) {
+          throw new BadRequestException(`Only ${item.quantity}× ${item.name} left to collect`);
+        }
+        const was = item.isLaybyHeld ? 'lay-by' : 'back order';
+        if (w.qty === item.quantity) {
+          await manager.update(OrderItem, { id: item.id }, {
+            isBackorder: false,
+            backorderFulfilledAt: null,
+            backorderQty: null,
+            isLaybyHeld: false,
+          });
+          item.isBackorder = false;
+          item.backorderFulfilledAt = null;
+          item.isLaybyHeld = false;
+        } else {
+          const qty = Number(item.quantity);
+          const part = (v: number | string | null) => r2((Number(v || 0) / qty) * w.qty);
+          const takenRow = manager.create(OrderItem, {
+            orderId: order.id,
+            productId: item.productId,
+            sku: item.sku,
+            name: item.name,
+            quantity: w.qty,
+            unitPrice: item.unitPrice,
+            discountPercent: item.discountPercent,
+            discountAmount: part(item.discountAmount),
+            taxAmount: part(item.taxAmount),
+            rowTotal: part(item.rowTotal),
+            costPrice: item.costPrice,
+            supplier: item.supplier,
+            poNumber: item.poNumber,
+            poSentAt: item.poSentAt,
+            isBackorder: false,
+            backorderFulfilledAt: null,
+            backorderQty: null,
+            isLaybyHeld: false,
+          });
+          // The rest keeps whatever is left so the two halves add up exactly.
+          const rest = {
+            quantity: qty - w.qty,
+            discountAmount: r2(Number(item.discountAmount || 0) - Number(takenRow.discountAmount)),
+            taxAmount: r2(Number(item.taxAmount || 0) - Number(takenRow.taxAmount)),
+            rowTotal: r2(Number(item.rowTotal || 0) - Number(takenRow.rowTotal)),
+            backorderQty: null,
+          };
+          await manager.update(OrderItem, { id: item.id }, rest);
+          Object.assign(item, rest);
+          items.push(await manager.save(takenRow));
+        }
+        taken.push(`${w.qty}× ${item.name} (was ${was})`);
+      }
+
+      const completedNow = await this.refreshStatusFromLines(manager, order, items);
+      const stillOwed = items
+        .filter((i) => (i.isBackorder && !i.backorderFulfilledAt) || i.isLaybyHeld)
+        .map((i) => `${i.quantity}× ${i.name}`);
+      try {
+        const editor = await manager.findOne(User, { where: { id: userId } });
+        const who = editor
+          ? [editor.firstName, editor.lastName].filter(Boolean).join(' ')
+          : `user #${userId}`;
+        await manager.save(
+          manager.create(OrderEvent, {
+            orderId: order.id,
+            userId,
+            type: 'collected',
+            description:
+              `Customer collected ${taken.join(', ')} — ${who}. ` +
+              (stillOwed.length ? `Still to collect: ${stillOwed.join(', ')}.` : 'Nothing left to collect.') +
+              (completedNow ? ' Lay-by completed.' : ''),
+          }),
+        );
+      } catch (evErr) {
+        // eslint-disable-next-line no-console
+        console.error(`[orders.collectItems] event write failed for order ${orderId}:`, evErr);
+      }
+    });
+    return (await this.findById(orderId)) as Order;
+  }
+
   async setItemStatus(
     orderId: number,
     itemId: number,
@@ -2185,57 +2434,11 @@ export class OrdersService {
     await queryRunner.startTransaction();
     try {
       if (changed) await queryRunner.manager.save(item);
-      const paidSoFar = async (): Promise<number> => {
-        const paidRow = await queryRunner.manager
-          .createQueryBuilder(Payment, 'p')
-          .where('p.orderId = :orderId', { orderId })
-          .andWhere('p.status = :status', { status: PaymentEntityStatus.COMPLETED })
-          .select('COALESCE(SUM(p.amount), 0)', 'total')
-          .getRawOne();
-        return Number(paidRow?.total || 0);
-      };
-      let completedNow = false;
-
-      // Order-level status follows the lines for standard (non-layby)
-      // orders: any open backorder line => BACKORDER_PENDING; none left
-      // => COMPLETE if paid in full, else PENDING so the balance can be
-      // collected. Laybys are governed by their payment schedule.
-      if (order.orderType !== 'layby') {
-        const openBackorder = order.items.some(
-          (i) => i.isBackorder && !i.backorderFulfilledAt,
-        );
-        const movable = new Set<string>([
-          OrderStatus.PENDING,
-          OrderStatus.COMPLETE,
-          OrderStatus.BACKORDER_PENDING,
-        ]);
-        if (movable.has(order.status)) {
-          if (openBackorder) {
-            order.status = OrderStatus.BACKORDER_PENDING;
-          } else {
-            const paidTotal = await paidSoFar();
-            const balanceOwed = paidTotal + 0.01 < Number(order.grandTotal);
-            order.status = balanceOwed ? OrderStatus.PENDING : OrderStatus.COMPLETE;
-            if (!balanceOwed) order.paymentStatus = PaymentStatus.PAID;
-          }
-          await queryRunner.manager.save(order);
-        }
-      } else if (
-        order.status === OrderStatus.LAYBY_ACTIVE ||
-        order.status === OrderStatus.LAYBY_EXPIRED
-      ) {
-        // Lay-by: paid in full and nothing still held or on back order =>
-        // the customer has everything, so it's complete.
-        const stillOpen = order.items.some(
-          (i) => (i.isBackorder && !i.backorderFulfilledAt) || i.isLaybyHeld,
-        );
-        if (!stillOpen && (await paidSoFar()) + 0.01 >= Number(order.grandTotal)) {
-          order.status = OrderStatus.COMPLETE;
-          order.paymentStatus = PaymentStatus.PAID;
-          await queryRunner.manager.save(order);
-          completedNow = true;
-        }
-      }
+      const completedNow = await this.refreshStatusFromLines(
+        queryRunner.manager,
+        order,
+        order.items,
+      );
 
       if (!changed && !completedNow) {
         await queryRunner.commitTransaction();

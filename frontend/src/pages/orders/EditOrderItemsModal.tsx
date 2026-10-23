@@ -23,6 +23,7 @@ interface Row {
   unitPrice: number;
   discountPercent: number;
   isBackorder: boolean;
+  isLaybyHeld: boolean;
   isCustom: boolean;
 }
 
@@ -42,6 +43,8 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
       unitPrice: Number(it.unitPrice),
       discountPercent: Number(it.discountPercent) || 0,
       isBackorder: !!it.isBackorder && !it.backorderFulfilledAt,
+      // Sent back so an edit doesn't turn lay-by lines into taken ones.
+      isLaybyHeld: !!it.isLaybyHeld,
       isCustom: it.productId == null,
     })),
   );
@@ -103,6 +106,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
         unitPrice: Number(p.price),
         discountPercent: 0,
         isBackorder: false,
+        isLaybyHeld: false,
         isCustom: false,
       },
     ]);
@@ -116,7 +120,18 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
     100;
   const subtotal = rows.reduce((s, r) => s + rowLineTotal(r), 0);
   const deliveryFee = Number(order.deliveryFee || 0);
-  const grandTotal = Math.round((subtotal + deliveryFee) * 100) / 100;
+  // The order's "Apply Further Discount" stays on through an edit — same
+  // rule as the server: a % keeps its share of the order, a $ amount
+  // stays (never more than the order). Sally, 23 Oct 2026 (POS-0342).
+  const cart = order.cartDiscount || { amount: 0, percent: null };
+  const oldBase = (order.items || []).reduce((s: number, it: any) => s + Number(it.rowTotal || 0), 0);
+  const cartDiscount =
+    Number(cart.amount) > 0
+      ? cart.percent != null && oldBase > 0
+        ? Math.round(Number(cart.amount) * (subtotal / oldBase) * 100) / 100
+        : Math.min(Number(cart.amount), subtotal)
+      : 0;
+  const grandTotal = Math.round((subtotal - cartDiscount + deliveryFee) * 100) / 100;
 
   const handleSave = async () => {
     if (rows.length === 0) {
@@ -133,6 +148,7 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
           discountPercent: r.discountPercent,
           unitPrice: r.isBackorder || r.isCustom ? r.unitPrice : undefined,
           isBackorder: r.isBackorder,
+          isLaybyHeld: r.isLaybyHeld && !r.isBackorder,
           isCustom: r.isCustom,
           sku: r.isCustom ? r.sku : undefined,
           name: r.isCustom ? r.name : undefined,
@@ -191,6 +207,11 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                         {r.isBackorder && (
                           <span className="ml-2 px-1.5 py-0.5 rounded bg-cyan-600/30 text-cyan-300 text-[10px] font-semibold uppercase">
                             Backorder
+                          </span>
+                        )}
+                        {r.isLaybyHeld && !r.isBackorder && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-600/30 text-amber-300 text-[10px] font-semibold uppercase">
+                            Lay-by
                           </span>
                         )}
                         {r.isCustom && (
@@ -328,6 +349,15 @@ export default function EditOrderItemsModal({ order, onClose, onSaved }: Props) 
                   <span>Subtotal</span>
                   <span>${subtotal.toFixed(2)}</span>
                 </div>
+                {cartDiscount > 0 && (
+                  <div className="flex justify-between text-green-400">
+                    <span>
+                      Order discount
+                      {cart.percent != null ? ` (${Number(cart.percent)}%)` : ''}
+                    </span>
+                    <span>-${cartDiscount.toFixed(2)}</span>
+                  </div>
+                )}
                 {deliveryFee > 0 && (
                   <div className="flex justify-between">
                     <span>Delivery</span>

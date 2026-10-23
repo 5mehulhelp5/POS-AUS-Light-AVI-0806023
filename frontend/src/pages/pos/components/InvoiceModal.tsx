@@ -556,10 +556,30 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
             <table style={{ width: '320px', fontSize: '13px' }}>
               <tbody>
-                <tr>
-                  <td style={totLabel}>SUBTOTAL</td>
-                  <td style={totVal(true)}>{money(invoice.grandTotal)}</td>
-                </tr>
+                {/* A cart discount ("Apply Further Discount") prints as its
+                    own row so the lines add up to the total (Sally, 23 Oct
+                    2026: POS-0342's $385.20 was nowhere on the invoice). */}
+                {(invoice.cartDiscount || 0) > 0.005 ? (
+                  <>
+                    <tr>
+                      <td style={totLabel}>SUBTOTAL</td>
+                      <td style={totVal()}>{money(invoice.grandTotal + invoice.cartDiscount)}</td>
+                    </tr>
+                    <tr>
+                      <td style={totLabel}>DISCOUNT:</td>
+                      <td style={totVal()}>-{money(invoice.cartDiscount)}</td>
+                    </tr>
+                    <tr>
+                      <td style={totLabel}>TOTAL</td>
+                      <td style={totVal(true)}>{money(invoice.grandTotal)}</td>
+                    </tr>
+                  </>
+                ) : (
+                  <tr>
+                    <td style={totLabel}>SUBTOTAL</td>
+                    <td style={totVal(true)}>{money(invoice.grandTotal)}</td>
+                  </tr>
+                )}
                 <tr>
                   <td style={totLabel}>GOODS TAKEN:</td>
                   <td style={totVal()}>

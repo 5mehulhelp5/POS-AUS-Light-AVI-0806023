@@ -171,10 +171,13 @@ export class OrdersController {
     // Timeline events (item edits etc.) ride along so the Order History
     // section can show every action without extra round-trips.
     const events = await this.ordersService.getEvents(id);
+    // The "Apply Further Discount" part of the discount — the invoice and
+    // Edit Items show it as its own line.
+    const cartDiscount = await this.ordersService.getCartDiscount(order, order.items || []);
 
     return {
       success: true,
-      data: { order: { ...order, ...exchange, events } },
+      data: { order: { ...order, ...exchange, events, cartDiscount } },
     };
   }
 
@@ -498,6 +501,21 @@ export class OrdersController {
     }
     await this.ordersService.assertEditable(id);
     const order = await this.ordersService.setItemStatus(id, itemId, status, user.id);
+    return { success: true, data: { order } };
+  }
+
+  // Customer takes part of a back order / lay-by (Sally, 23 Oct 2026).
+  @Post(':id/collect')
+  @ApiOperation({
+    summary: 'Customer collects some of the back-order / lay-by items — splits those lines, total unchanged',
+  })
+  async collectItems(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { lines?: Array<{ itemId: number; qty: number }> },
+    @CurrentUser() user: any,
+  ) {
+    await this.ordersService.assertEditable(id);
+    const order = await this.ordersService.collectItems(id, body?.lines || [], user.id);
     return { success: true, data: { order } };
   }
 

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChevronDownIcon,
   XMarkIcon,
   ScissorsIcon,
   ClipboardDocumentIcon,
@@ -138,7 +139,11 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
   const [products, setProducts] = useState<StripProduct[]>(
     FALLBACK_STRIP_PRODUCTS,
   );
-  const [productId, setProductId] = useState(FALLBACK_STRIP_PRODUCTS[0].id);
+  // Starts with no strip chosen: a pre-filled first product looked fixed
+  // and staff thought they couldn't change it (Sally, 23 Oct 2026).
+  const [productId, setProductId] = useState('');
+  const productInputRef = useRef<HTMLInputElement>(null);
+  const lengthInputRef = useRef<HTMLInputElement>(null);
   // Searchable product picker — 165 strips is too many for a bare
   // <select>. While open, the input holds the filter query; closed, it
   // shows the selected product's name.
@@ -149,7 +154,8 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
   const [lengthMStr, setLengthMStr] = useState('');
   const [tailMStr, setTailMStr] = useState('1');
   // How many identical cut strips (Sally, 7 Sep: "add 4x 1m led strip").
-  const [qtyStr, setQtyStr] = useState('1');
+  // Blank until typed (blank = 1) — Sally, 23 Oct 2026.
+  const [qtyStr, setQtyStr] = useState('');
   const [isTrade, setIsTrade] = useState(defaultTrade);
   const [order, setOrder] = useState<OrderLine[]>([]);
   // Custom strip fields (used when productId === CUSTOM_ID).
@@ -172,9 +178,9 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
         const list = r.data?.data?.products;
         if (Array.isArray(list) && list.length > 0) {
           setProducts(list);
-          // Keep the current selection if it still exists, else reset.
+          // Keep the current selection if it still exists, else none.
           setProductId((cur) =>
-            list.some((p: StripProduct) => p.id === cur) ? cur : list[0].id,
+            cur === CUSTOM_ID || list.some((p: StripProduct) => p.id === cur) ? cur : '',
           );
         }
       })
@@ -202,9 +208,18 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
       tailPerM: toNum(customTailPerM),
     };
   }, [customName, customSku, customRetail, customTrade, customCutMm, customTailIncl, customTailPerM]);
-  const product = isCustom
-    ? customProduct
-    : products.find((p) => p.id === productId) ?? products[0] ?? FALLBACK_STRIP_PRODUCTS[0];
+  const chosen = isCustom ? customProduct : products.find((p) => p.id === productId) ?? null;
+  // Zero rates until a strip is chosen — nothing can be added meanwhile.
+  const product: StripProduct = chosen ?? {
+    id: '',
+    name: '',
+    retailPerM: 0,
+    tradePerM: 0,
+    cutMm: 1,
+    maxRunM: 0,
+    includedTailM: 0,
+    tailPerM: 0,
+  };
   const perM = isTrade ? product.tradePerM : product.retailPerM;
 
   const filteredProducts = useMemo(() => {
@@ -252,7 +267,13 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
   // routinely buy 100m+ (Sally: "take off '5m max continuous run'").
   // A custom strip needs a name and a price per metre before it can be added.
   const customReady = !isCustom || (customName.trim() !== '' && perM > 0);
-  const canAdd = calc.suppliedM > 0 && customReady;
+  const canAdd = !!chosen && calc.suppliedM > 0 && customReady;
+  const pickProduct = (id: string) => {
+    setProductId(id);
+    setPickerOpen(false);
+    productInputRef.current?.blur();
+    if (id !== CUSTOM_ID) setTimeout(() => lengthInputRef.current?.focus(), 0);
+  };
 
   const subtotal = order.reduce((s, l) => s + l.linePrice, 0);
 
@@ -274,7 +295,7 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
       },
     ]);
     setLengthMStr('');
-    setQtyStr('1');
+    setQtyStr('');
   };
 
   const handleRemove = (id: number) => {
@@ -351,7 +372,10 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
                 <button
                   type="button"
                   onClick={() => {
-                    if (isCustom) setProductId(products[0]?.id ?? FALLBACK_STRIP_PRODUCTS[0].id);
+                    if (isCustom) {
+                      setProductId('');
+                      productInputRef.current?.focus();
+                    }
                   }}
                   className={`px-3 py-1.5 ${!isCustom ? 'bg-amber-500 text-gray-900' : 'bg-pos-card text-gray-300 hover:text-pos-text'}`}
                 >
@@ -368,8 +392,10 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
             </div>
             <div className="relative">
               <input
+                ref={productInputRef}
                 type="text"
-                value={pickerOpen ? productQuery : isCustom ? 'Custom strip (typed in below)' : product.name}
+                autoFocus={!chosen}
+                value={pickerOpen ? productQuery : isCustom ? 'Custom strip (typed in below)' : chosen ? product.name : ''}
                 onFocus={() => {
                   setPickerOpen(true);
                   setProductQuery('');
@@ -380,28 +406,41 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && filteredProducts.length > 0) {
-                    setProductId(filteredProducts[0].id);
-                    setPickerOpen(false);
-                    (e.target as HTMLInputElement).blur();
+                    pickProduct(filteredProducts[0].id);
                   } else if (e.key === 'Escape') {
                     setPickerOpen(false);
                     (e.target as HTMLInputElement).blur();
                   }
                 }}
                 onBlur={() => setTimeout(() => setPickerOpen(false), 150)}
-                placeholder={`Search ${products.length} strips — name or SKU`}
-                className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                placeholder={`Select a strip — or type to search ${products.length} (name or SKU)`}
+                className="w-full border border-gray-700 bg-pos-bg rounded-md pl-3 pr-10 py-2 text-sm text-pos-text placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
+              {/* Drop-down arrow so it reads as a list to pick from. */}
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-label="Show strips"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (pickerOpen) {
+                    setPickerOpen(false);
+                    productInputRef.current?.blur();
+                  } else {
+                    productInputRef.current?.focus();
+                  }
+                }}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-pos-text"
+              >
+                <ChevronDownIcon className={`h-4 w-4 transition-transform ${pickerOpen ? 'rotate-180' : ''}`} />
+              </button>
               {pickerOpen && (
                 <ul className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto bg-pos-card border border-gray-700 rounded-md shadow-xl">
                   <li>
                     <button
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setProductId(CUSTOM_ID);
-                        setPickerOpen(false);
-                      }}
+                      onClick={() => pickProduct(CUSTOM_ID)}
                       className={`w-full text-left px-3 py-2 border-b border-gray-700 hover:bg-pos-accent/40 ${
                         isCustom ? 'text-amber-400' : 'text-pos-text'
                       }`}
@@ -424,10 +463,7 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
                           // preventDefault stops the input's blur firing
                           // before this click lands.
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setProductId(p.id);
-                            setPickerOpen(false);
-                          }}
+                          onClick={() => pickProduct(p.id)}
                           className={`w-full text-left px-3 py-2 hover:bg-pos-accent/40 ${
                             p.id === productId ? 'text-amber-400' : 'text-pos-text'
                           }`}
@@ -523,6 +559,11 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
               </div>
             )}
 
+            {!chosen ? (
+              <p className="mt-3 text-sm text-gray-500">
+                Choose a strip to see its rate, cut points and tail.
+              </p>
+            ) : (
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-400">
               <span>Rate <span className="font-bold text-pos-text">${perM.toFixed(2)}</span>/m</span>
               <span>
@@ -539,6 +580,7 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
                 <span className="font-bold text-pos-text">+${product.tailPerM.toFixed(2)}</span>/m
               </span>
             </div>
+            )}
 
             {/* Length + Qty + Tail inputs (reel bar removed — Sally, 7 Sep) */}
             <div className="mt-4 grid grid-cols-3 gap-4">
@@ -552,10 +594,10 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
                   min={0}
                   step={0.5}
                   className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  ref={lengthInputRef}
                   value={lengthMStr}
                   onChange={(e) => setLengthMStr(e.target.value)}
                   placeholder="e.g. 3.2"
-                  autoFocus
                 />
                 {calc.lengthMm > 0 && product.cutMm > 1 && (
                   <p className="text-xs text-gray-500 mt-1">
@@ -575,12 +617,13 @@ export default function StripCutModal({ onClose, defaultTrade = false, onSendToC
                   inputMode="numeric"
                   min={1}
                   step={1}
-                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full border border-gray-700 bg-pos-bg rounded-md px-3 py-2 text-sm text-pos-text placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   value={qtyStr}
                   onChange={(e) => setQtyStr(e.target.value)}
+                  placeholder="e.g. 4"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  identical strips, e.g. 4 × 1m
+                  identical strips — leave blank for 1
                 </p>
               </div>
               <div>

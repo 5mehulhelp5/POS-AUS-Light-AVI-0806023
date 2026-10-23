@@ -7,6 +7,7 @@ import { RootState } from '../../store';
 import { buildInvoiceData } from '../../utils/orderInvoice';
 import InvoiceModal from '../pos/components/InvoiceModal';
 import EditOrderItemsModal from './EditOrderItemsModal';
+import CollectItemsModal, { isOpenLine } from './CollectItemsModal';
 import OrderHistoryTimeline from './OrderHistoryTimeline';
 import {
   MagnifyingGlassIcon,
@@ -146,6 +147,7 @@ export default function OrdersPage() {
   // open it. Closed on cancel or after a successful save (which also
   // refreshes selectedOrder).
   const [editItemsOrder, setEditItemsOrder] = useState<any>(null);
+  const [collectOrder, setCollectOrder] = useState<any>(null);
   const [invoiceData, setInvoiceData] = useState<any>(null);
   // Order-notes edit-in-place: null = not editing, string = current
   // draft. Committing sends a PATCH and refreshes the selected order.
@@ -1255,6 +1257,27 @@ export default function OrdersPage() {
         />
       )}
 
+      {collectOrder && (
+        <CollectItemsModal
+          order={collectOrder}
+          onClose={() => setCollectOrder(null)}
+          onSaved={async () => {
+            const id = collectOrder.id;
+            setCollectOrder(null);
+            try {
+              const fresh = await ordersApi.getOrder(id);
+              setSelectedOrder({
+                ...fresh.data.data.order,
+                refunds: selectedOrder?.refunds || [],
+              });
+            } catch {
+              // ignored — user can close + reopen the drawer if refresh fails
+            }
+            fetchOrders();
+          }}
+        />
+      )}
+
       {/* Order Detail Modal */}
       {selectedOrder && (
         <div className="modal-backdrop">
@@ -1708,6 +1731,21 @@ export default function OrdersPage() {
                   Add Lights
                 </button>
                 )}
+                {/* Customer takes part of a back order / lay-by now — not
+                    in Edit Items (Sally, 23 Oct 2026). */}
+                {canRefund &&
+                  !isLocked(selectedOrder) &&
+                  !['cancelled', 'refunded'].includes(selectedOrder.status) &&
+                  (selectedOrder.items || []).some(isOpenLine) && (
+                    <button
+                      className="btn-primary bg-indigo-600 hover:bg-indigo-700"
+                      onClick={() => setCollectOrder(selectedOrder)}
+                      disabled={isTakingLaybyPayment}
+                      title="The customer is taking some of the back-order / lay-by items now"
+                    >
+                      Collect Items
+                    </button>
+                  )}
                 {canRefund && !isLocked(selectedOrder) && (
                   <button
                     className="btn-primary bg-cyan-600 hover:bg-cyan-700"
