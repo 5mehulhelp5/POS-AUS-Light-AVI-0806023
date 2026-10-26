@@ -166,6 +166,16 @@ export interface MagentoOrder {
   payment?: {
     method: string;
   };
+  // Order history. entity_name 'order' = a comment staff typed on the
+  // order in Magento admin; 'invoice' / 'creditmemo' = payment and refund
+  // notes Magento writes itself.
+  status_histories?: Array<{
+    entity_id?: number;
+    entity_name?: string;
+    comment?: string | null;
+    created_at?: string;
+    status?: string;
+  }>;
 }
 
 export interface MagentoOrdersResponse {

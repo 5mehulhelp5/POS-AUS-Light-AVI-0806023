@@ -1490,6 +1490,29 @@ export default function OrdersPage() {
                 );
               })()}
 
+              {/* Comments staff wrote on the order in Magento, newest first
+                  (Sally, 26 Oct 2026: e.g. "B/O ETA late November"). */}
+              {isWebOrder(selectedOrder) &&
+                (() => {
+                  const comments = (selectedOrder.events || [])
+                    .filter((e: any) => e.type === 'magento_comment')
+                    .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+                  if (!comments.length) return null;
+                  return (
+                    <div className="bg-pos-dark rounded-lg p-4 border border-blue-500/40">
+                      <p className="text-xs text-gray-400 uppercase mb-2">Comments from Magento</p>
+                      <ul className="space-y-1.5 text-sm">
+                        {comments.map((c: any) => (
+                          <li key={c.id} className="flex justify-between gap-3">
+                            <span className="whitespace-pre-wrap">{c.description}</span>
+                            <span className="text-xs text-gray-400 whitespace-nowrap">{formatDate(c.createdAt)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
+
               <div className="bg-pos-dark rounded-lg p-4">
                 <p className="text-xs text-gray-400 uppercase mb-2">
                   Items on this {selectedOrder.orderType === 'layby' ? 'Lay By' : 'Order'}

@@ -653,6 +653,9 @@ export class ReportsService {
               oi.row_total rowTotal, oi.quantity origQty, o.source, o.internal_notes internalNotes,
               oi.po_number poNumber, oi.po_sent_at poSentAt, c.email, o.customer_id customerId, oi.supplier lineSupplier,
               p.cost productCost, oi.cost_price lineCost, p.bulk_cost bulkCost, p.bulk_min_qty bulkMinQty,
+              (SELECT e.description FROM order_events e WHERE e.order_id = o.id AND e.type = 'magento_comment'
+                ORDER BY e.created_at DESC, e.id DESC LIMIT 1) webComment,
+              (SELECT MAX(e.created_at) FROM order_events e WHERE e.order_id = o.id AND e.type = 'magento_comment') webCommentAt,
               (SELECT sc.supplier FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listSupplier,
               (SELECT sc.cost_inc_gst FROM supplier_costs sc WHERE sc.sku = oi.sku ORDER BY sc.id LIMIT 1) listCost,
               (SELECT cat.name FROM product_categories pc JOIN categories cat ON cat.id = pc.category_id
@@ -722,6 +725,10 @@ export class ReportsService {
         poNumber: x.poNumber || null,
         poSentAt: x.poSentAt ? new Date(x.poSentAt).toISOString() : null,
         supplier,
+        // Latest comment staff wrote on the website order in Magento, e.g.
+        // an ETA (Sally, 26 Oct 2026).
+        webComment: x.webComment || null,
+        webCommentAt: x.webCommentAt ? new Date(x.webCommentAt).toISOString() : null,
       };
       const key = supplier.toLowerCase();
       const g =

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { MagentoService, MagentoProduct, MagentoCustomer, MagentoOrder } from './magento.service';
 import { Product, ProductType } from '../products/entities/product.entity';
 import { Category } from '../products/entities/category.entity';
@@ -49,6 +49,9 @@ export const WEBSITE_ORDER_IMPORT_KEY = 'website_order_import';
 export interface WebsiteOrderImportState {
   enabled: boolean;
   syncedUntil: string | null;
+  // Comments written in Magento before the POS kept them have been
+  // brought in (one-off, 26 Oct 2026).
+  commentsBackfilled?: boolean;
 }
 function normaliseWebsiteOrderImport(raw: unknown): WebsiteOrderImportState {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -56,7 +59,7 @@ function normaliseWebsiteOrderImport(raw: unknown): WebsiteOrderImportState {
     ? r.syncedUntil
     : null;
   // On unless someone switched it off.
-  return { enabled: r.enabled !== false, syncedUntil: until };
+  return { enabled: r.enabled !== false, syncedUntil: until, commentsBackfilled: r.commentsBackfilled === true };
 }
 // Magento's REST filters take UTC "YYYY-MM-DD HH:mm:ss".
 function magentoUtc(d: Date): string {
@@ -270,6 +273,83 @@ export class SyncService {
     }
     if (!state.enabled || this.orderSyncProgress.running) return;
     await this.importWebsiteOrders();
+    if (!state.commentsBackfilled && !this.commentsBackfillRunning) {
+      this.commentsBackfillRunning = true;
+      try {
+        const added = await this.backfillMagentoComments();
+        await this.saveWebsiteOrderImport({ ...(await this.getWebsiteOrderImport()), commentsBackfilled: true });
+        this.logger.log(`Magento order comments: ${added} older comments brought in`);
+      } catch (err) {
+        this.logger.warn(`Magento order comments: bringing in older ones failed, will retry (${err})`);
+      } finally {
+        this.commentsBackfillRunning = false;
+      }
+    }
+  }
+
+  private commentsBackfillRunning = false;
+
+  /**
+   * Comments staff add on a website order in Magento admin (e.g. "B/O ETA
+   * late November, customer happy to wait") — kept on the POS order so
+   * nobody checks both systems (Sally, 26 Oct 2026, order 7000027944).
+   * Only the order's own comments: payment capture / refund notes are
+   * invoice / creditmemo entries. Each comment is stored once, as an
+   * order_events row dated when it was written in Magento. Returns how
+   * many were new.
+   */
+  private async saveMagentoComments(orderId: number, mo: MagentoOrder): Promise<number> {
+    const comments = (mo.status_histories || [])
+      .filter((h) => (h.entity_name || 'order') === 'order' && h.comment)
+      .map((h) => ({
+        text: String(h.comment).replace(/<[^>]*>/g, ' ').replace(/[ \t]+/g, ' ').trim().slice(0, 4000),
+        // Magento times are UTC "YYYY-MM-DD HH:mm:ss", like the POS server.
+        at: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(h.created_at || '') ? h.created_at! : magentoUtc(new Date()),
+      }))
+      .filter((c) => c.text);
+    if (!comments.length) return 0;
+    const have = new Set<string>(
+      (
+        await this.orderRepository.query(
+          `SELECT description FROM order_events WHERE order_id = ? AND type = 'magento_comment'`,
+          [orderId],
+        )
+      ).map((r: { description: string }) => r.description),
+    );
+    let added = 0;
+    for (const c of comments) {
+      if (have.has(c.text)) continue;
+      await this.orderRepository.query(
+        `INSERT INTO order_events (order_id, user_id, type, description, created_at) VALUES (?, NULL, 'magento_comment', ?, ?)`,
+        [orderId, c.text, c.at],
+      );
+      have.add(c.text);
+      added++;
+    }
+    return added;
+  }
+
+  // One-off: comments written in Magento before the POS kept them. Reads
+  // the website orders changed since 1 Jun 2026 and stores the comments of
+  // the ones the POS already has (nothing else on the order is touched).
+  async backfillMagentoComments(): Promise<number> {
+    let added = 0;
+    await this.magentoService.forEachOrderPageUpdatedSince('2026-06-01 00:00:00', async (page) => {
+      const withComments = page.filter((mo) =>
+        (mo.status_histories || []).some((h) => (h.entity_name || 'order') === 'order' && h.comment),
+      );
+      if (!withComments.length) return;
+      const rows = await this.orderRepository.find({
+        where: { magentoOrderId: In(withComments.map((mo) => String(mo.entity_id))) },
+        select: { id: true, magentoOrderId: true },
+      });
+      const idOf = new Map(rows.map((r) => [r.magentoOrderId, r.id]));
+      for (const mo of withComments) {
+        const id = idOf.get(String(mo.entity_id));
+        if (id) added += await this.saveMagentoComments(id, mo);
+      }
+    });
+    return added;
   }
 
   // Reads the Magento orders created or changed since the last run and
@@ -1643,6 +1723,11 @@ export class SyncService {
     }
 
     const savedOrder = await this.orderRepository.save(order);
+    try {
+      await this.saveMagentoComments(savedOrder.id, magentoOrder);
+    } catch (err) {
+      this.logger.warn(`Website order ${magentoOrder.increment_id}: comments not saved (${err})`);
+    }
 
     // Override TypeORM's auto-managed created_at / updated_at with Magento's real timestamps.
     // @CreateDateColumn / @UpdateDateColumn ignore values passed via create(), so update directly.

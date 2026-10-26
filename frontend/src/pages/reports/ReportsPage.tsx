@@ -777,6 +777,8 @@ type BoLine = {
   source?: 'pos' | 'magento' | 'legacy';
   // Supplier quantity-break cost (EGLO, 22 Oct 2026).
   standardCostEx?: number | null; bulkCostEx?: number | null; bulkMinQty?: number | null; bulkApplied?: boolean;
+  // Latest comment on the website order in Magento (Sally, 26 Oct 2026).
+  webComment?: string | null; webCommentAt?: string | null;
 };
 type BoGroup = { supplier: string; lines: BoLine[]; units: number; value: number; costEx: number; linesWithoutCost: number };
 
@@ -981,7 +983,20 @@ function Backorders({ readOnly = false }: { readOnly?: boolean }) {
     { key: 'c', label: 'Customer', value: (r) => r.customer + (r.company ? ` (${r.company})` : '') },
     { key: 'p', label: 'Phone', value: (r) => formatPhone(r.phone) },
     { key: 'sku', label: 'SKU', value: (r) => r.sku },
-    { key: 'n', label: 'Product', value: (r) => r.name },
+    {
+      key: 'n', label: 'Product', value: (r) => r.name,
+      render: (r) => (
+        <div>
+          <div>{r.name}</div>
+          {r.webComment && (
+            <div className="mt-0.5 text-xs text-blue-400" title="Latest comment on this order in Magento">
+              Magento: {r.webComment}
+              {r.webCommentAt && <span className="text-gray-500"> · {dateTime(r.webCommentAt)}</span>}
+            </div>
+          )}
+        </div>
+      ),
+    },
     ...(readOnly
       ? []
       : [

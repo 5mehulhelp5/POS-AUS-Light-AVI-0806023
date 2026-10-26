@@ -249,7 +249,15 @@ export default function OrderHistoryTimeline({
       node: (
         <div className="bg-purple-500/10 border border-purple-500/30 rounded p-3 text-sm">
           <div className="flex justify-between gap-3">
-            <span className="text-purple-200">{ev.description}</span>
+            <span className="text-purple-200">
+              {ev.type === 'magento_comment' ? (
+                <>
+                  <span className="font-semibold">Comment in Magento:</span> {ev.description}
+                </>
+              ) : (
+                ev.description
+              )}
+            </span>
             <span className="text-gray-400 whitespace-nowrap">
               {formatDate(ev.createdAt)}
             </span>
