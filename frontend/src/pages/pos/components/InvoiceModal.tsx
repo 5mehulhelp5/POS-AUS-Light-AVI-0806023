@@ -765,8 +765,8 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
           <div style={{ display: 'flex', gap: '40px', marginTop: '22px', borderTop: `1px solid ${RULE}`, paddingTop: '14px', fontSize: '11px', color: MUTED }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 800, color: INK }}>*PRICES GST INCLUSIVE</div>
-              <div style={{ marginTop: '14px' }}>Goods checked and received :</div>
-              <div style={{ marginTop: '18px', borderBottom: `1px solid ${INK}`, height: '0' }} />
+              {/* "Goods checked and received" + signature line removed
+                  (Sally, 26 Oct 2026). */}
               <div style={{ marginTop: '14px', fontWeight: 800, color: INK }}>
                 *RETURNS & REFUNDS ACCEPTED WITHIN 30 DAYS<br />OF PURCHASE ONLY*
               </div>
