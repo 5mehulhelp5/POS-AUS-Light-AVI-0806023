@@ -866,8 +866,12 @@ export default function QuotesPage() {
   // once the preview is on screen.
   useEffect(() => {
     if (!printingQuote || !emailOnOpen) return;
-    setEmailOnOpen(false);
-    const t = setTimeout(() => handleEmailQuote(printingQuote), 100);
+    // The flag is cleared inside the timer: clearing it first re-ran this
+    // effect, whose cleanup cancelled the timer before it fired.
+    const t = setTimeout(() => {
+      setEmailOnOpen(false);
+      handleEmailQuote(printingQuote);
+    }, 100);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [printingQuote, emailOnOpen]);
