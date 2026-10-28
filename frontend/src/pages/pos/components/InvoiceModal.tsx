@@ -6,6 +6,7 @@ import {
   EnvelopeIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { downloadEmailDraft } from '../../../utils/emailDraft';
 import { CartItem } from '../../../store/slices/cartSlice';
 import { formatPhone } from '../../../utils/phone';
 
@@ -184,14 +185,8 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
     return (await html2pdf().set(pdfOptions).from(node).outputPdf('blob')) as Blob;
   };
 
-  // Email the invoice with the PDF attached (Sally, 12 Oct 2026: "Can
-  // there be a PDF file attached ... at the moment it's all text"). A
-  // browser can't attach a file to a mailto link, so the POS builds the
-  // whole email itself — customer's address, subject, Sally's message
-  // (16 Sep template) and the invoice PDF — as an unsent Outlook draft
-  // (.eml with "X-Unsent: 1") and downloads it. Opening it from Chrome's
-  // downloads opens Outlook's New Email window with everything in place,
-  // sent from that computer's Outlook account. No server-side mail.
+  // Email the invoice with the PDF attached, as an Outlook draft (see
+  // utils/emailDraft). Message: Sally's 16 Sep template.
   const [emailBusy, setEmailBusy] = useState(false);
   const handleEmail = async () => {
     if (emailBusy) return;
@@ -220,31 +215,16 @@ export default function InvoiceModal({ invoice, onClose }: InvoiceModalProps) {
       `info@australianlighting.com.au or contact us on 03 9548 9200 (option 1)\n\n` +
       `Thank you for choosing\nAustralian Lighting\n\n` +
       `1704 Dandenong Rd\nOakleigh East Vic 3166\n03 9548 9200\n`;
-    const addresses = to.split(/[,;\s]+/).filter(Boolean);
-
     setEmailBusy(true);
     try {
-      const pdf = await buildPdfBlob();
-      const eml = buildEml({
-        to: addresses,
+      await downloadEmailDraft({
+        to,
         subject,
         body,
-        attachment: { name: pdfName, type: 'application/pdf', base64: await blobToBase64(pdf) },
+        pdf: await buildPdfBlob(),
+        pdfName,
+        emlName: `Invoice-${invoice.orderNumber}.eml`,
       });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([eml], { type: 'message/rfc822' }));
-      a.download = `Invoice-${invoice.orderNumber}.eml`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-      // The AL POS app window has no downloads button, so say where the
-      // file went (Sally, 13 Oct 2026: "what steps to get this to pop up").
-      toast(
-        `Email ready: Invoice-${invoice.orderNumber}.eml is in Downloads. Press Ctrl+J and click it ` +
-          '(or open your Downloads folder). It opens in Outlook with the PDF attached. Check it and press Send.',
-        { duration: 15000, icon: '📧' },
-      );
     } catch {
       toast.error('Could not build the email — use Save PDF and attach it manually');
     } finally {
@@ -837,59 +817,3 @@ const totVal = (bold = false): CSSProperties => ({
   fontWeight: bold ? 800 : 500,
   minWidth: '120px',
 });
-
-// ---------------------------------------------------------------- email file
-// UTF-8 text -> base64 (btoa only takes Latin-1).
-function utf8Base64(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(bin);
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(',')[1] || '');
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
-}
-
-// An unsent email (RFC 822 / MIME) with one attachment. "X-Unsent: 1"
-// makes Outlook open it as a new message ready to send rather than as a
-// received one. No From header — Outlook uses that computer's account.
-function buildEml(m: {
-  to: string[];
-  subject: string;
-  body: string;
-  attachment: { name: string; type: string; base64: string };
-}): string {
-  const wrap = (b64: string) => b64.replace(/.{1,76}/g, '$&\r\n').trimEnd();
-  const header = (v: string) => (/^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${utf8Base64(v)}?=`);
-  const boundary = `----=_ALPOS_${Date.now().toString(36)}`;
-  const lines = [
-    'X-Unsent: 1',
-    ...(m.to.length ? [`To: ${m.to.join(', ')}`] : []),
-    `Subject: ${header(m.subject)}`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/mixed; boundary="${boundary}"`,
-    '',
-    `--${boundary}`,
-    'Content-Type: text/plain; charset="utf-8"',
-    'Content-Transfer-Encoding: base64',
-    '',
-    wrap(utf8Base64(m.body.replace(/\r?\n/g, '\r\n'))),
-    `--${boundary}`,
-    `Content-Type: ${m.attachment.type}; name="${m.attachment.name}"`,
-    `Content-Disposition: attachment; filename="${m.attachment.name}"`,
-    'Content-Transfer-Encoding: base64',
-    '',
-    wrap(m.attachment.base64),
-    `--${boundary}--`,
-    '',
-  ];
-  return lines.join('\r\n');
-}

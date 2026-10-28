@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { quotesApi, customersApi, productsApi, settingsApi } from '../../services/api';
@@ -21,10 +21,12 @@ import {
   ArrowRightCircleIcon,
   PrinterIcon,
   NoSymbolIcon,
+  EnvelopeIcon,
 } from '@heroicons/react/24/outline';
 import { formatPhone } from '../../utils/phone';
 import { posImage } from '../../utils/imageUrl';
 import { swapParentsForOptions } from '../../utils/configurable';
+import { downloadEmailDraft } from '../../utils/emailDraft';
 
 interface Quote {
   id: number;
@@ -173,6 +175,12 @@ export default function QuotesPage() {
   const [convertDeposit, setConvertDeposit] = useState('');
   const [cancelConfirm, setCancelConfirm] = useState<any>(null);
   const [printingQuote, setPrintingQuote] = useState<any>(null);
+  // Email a quote with its PDF attached, as an Outlook draft like the
+  // invoice's Email button (Sally, 28 Oct 2026: "Lucy did a quote but
+  // there's no email button"). The PDF is made from the quote preview.
+  const quoteDocRef = useRef<HTMLDivElement>(null);
+  const [emailingQuote, setEmailingQuote] = useState(false);
+  const [emailOnOpen, setEmailOnOpen] = useState(false);
   const [storeSettings, setStoreSettings] = useState<any>({});
 
   useEffect(() => {
@@ -802,6 +810,68 @@ export default function QuotesPage() {
     }
   };
 
+  const handleEmailQuote = async (q: any) => {
+    const node = quoteDocRef.current;
+    if (!node || emailingQuote) return;
+    const aud = (n: number) =>
+      n.toLocaleString('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 2 });
+    const name = q.customer ? `${q.customer.firstName || ''} ${q.customer.lastName || ''}`.trim() : '';
+    const total = aud(parseFloat(q.grandTotal) || 0);
+    const body =
+      `Hi${name ? ` ${name}` : ''},\n\n` +
+      `Thank you for your enquiry! Please find attached quote #${q.quoteNumber} for ${total}.\n\n` +
+      `Quote details:\n` +
+      `- Quote Number: ${q.quoteNumber}\n` +
+      `- Quote Date: ${formatDate(q.createdAt)}\n` +
+      `- Valid Until: ${q.expiresAt ? formatDate(q.expiresAt) : '-'}\n` +
+      `- Total: ${total} (inc GST)\n\n` +
+      `If you have any questions about this quote or would like to go ahead, simply reply to email ` +
+      `info@australianlighting.com.au or contact us on 03 9548 9200 (option 1)\n\n` +
+      `Thank you for choosing\nAustralian Lighting\n\n` +
+      `1704 Dandenong Rd\nOakleigh East Vic 3166\n03 9548 9200\n`;
+    setEmailingQuote(true);
+    try {
+      const html2pdf = (await import('html2pdf.js')).default;
+      const pdfName = `Quote-${q.quoteNumber}.pdf`;
+      const pdf = (await html2pdf()
+        .set({
+          margin: 10,
+          filename: pdfName,
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+          html2canvas: { scale: 2, useCORS: true },
+        })
+        .from(node)
+        .outputPdf('blob')) as Blob;
+      await downloadEmailDraft({
+        to: q.customer?.email || '',
+        subject: `Quote #${q.quoteNumber} — Australian Lighting`,
+        body,
+        pdf,
+        pdfName,
+        emlName: `Quote-${q.quoteNumber}.eml`,
+      });
+    } catch {
+      toast.error('Could not build the email — print the quote to PDF and attach it manually');
+    } finally {
+      setEmailingQuote(false);
+    }
+  };
+
+  // The printed quote only has a Disc % column when a line was discounted,
+  // and an undiscounted line in it shows blank, not 0% (Sally, 28 Oct 2026).
+  const quoteHasDiscount = (q: any) =>
+    (q?.items || []).some((i: any) => parseFloat(i.discountPercent) > 0);
+
+  // "Email" on the quote screen opens the preview and starts the email
+  // once the preview is on screen.
+  useEffect(() => {
+    if (!printingQuote || !emailOnOpen) return;
+    setEmailOnOpen(false);
+    const t = setTimeout(() => handleEmailQuote(printingQuote), 100);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printingQuote, emailOnOpen]);
+
   const handleCancelQuote = async () => {
     if (!cancelConfirm) return;
     try {
@@ -1097,6 +1167,22 @@ export default function QuotesPage() {
                 >
                   <PrinterIcon className="h-4 w-4" />
                   Print
+                </button>
+                <button
+                  className="btn-secondary flex items-center gap-2"
+                  disabled={emailingQuote}
+                  title={
+                    selectedQuote.customer?.email
+                      ? `Creates an email to ${selectedQuote.customer.email} with the quote PDF attached`
+                      : 'Creates an email with the quote PDF attached — type the customer address in Outlook'
+                  }
+                  onClick={() => {
+                    setEmailOnOpen(true);
+                    setPrintingQuote(selectedQuote);
+                  }}
+                >
+                  <EnvelopeIcon className="h-4 w-4" />
+                  {emailingQuote ? 'Preparing…' : 'Email'}
                 </button>
                 {canEdit && (
                   <button
@@ -2150,7 +2236,7 @@ export default function QuotesPage() {
       {printingQuote && (
         <div className="modal-backdrop-top print:bg-white print:static" style={{ zIndex: 70 }}>
           <div className="modal-content bg-white text-black !p-0 print:shadow-none printable-root">
-            <div className="p-8">
+            <div className="p-8" ref={quoteDocRef}>
               {/* Store header */}
               <div className="flex justify-between items-start mb-6 border-b-2 border-gray-800 pb-4">
                 <div>
@@ -2223,7 +2309,7 @@ export default function QuotesPage() {
                     <th className="text-left py-2">Item</th>
                     <th className="text-center py-2 w-16">Qty</th>
                     <th className="text-right py-2 w-24">Unit Price</th>
-                    <th className="text-center py-2 w-16">Disc %</th>
+                    {quoteHasDiscount(printingQuote) && <th className="text-center py-2 w-16">Disc %</th>}
                     <th className="text-right py-2 w-24">Total</th>
                   </tr>
                 </thead>
@@ -2236,7 +2322,11 @@ export default function QuotesPage() {
                       </td>
                       <td className="text-center py-2">{item.quantity}</td>
                       <td className="text-right py-2">${parseFloat(item.unitPrice).toFixed(2)}</td>
-                      <td className="text-center py-2">{fmtPct(parseFloat(item.discountPercent))}%</td>
+                      {quoteHasDiscount(printingQuote) && (
+                        <td className="text-center py-2">
+                          {parseFloat(item.discountPercent) > 0 ? `${fmtPct(parseFloat(item.discountPercent))}%` : ''}
+                        </td>
+                      )}
                       <td className="text-right py-2 font-medium">
                         ${parseFloat(item.rowTotal).toFixed(2)}
                       </td>
@@ -2286,6 +2376,14 @@ export default function QuotesPage() {
             <div className="flex gap-3 p-4 border-t border-gray-200 print:hidden">
               <button className="btn-secondary flex-1" onClick={() => setPrintingQuote(null)}>
                 Close
+              </button>
+              <button
+                className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 disabled:opacity-60"
+                disabled={emailingQuote}
+                onClick={() => handleEmailQuote(printingQuote)}
+              >
+                <EnvelopeIcon className="h-5 w-5" />
+                {emailingQuote ? 'Preparing…' : 'Email'}
               </button>
               <button
                 className="btn-primary flex-1 flex items-center justify-center gap-2"
