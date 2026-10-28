@@ -594,7 +594,7 @@ function SalesByItem({ params, showCost = true }: { params: ReportRange; showCos
             />
             <Note>
               {showCost &&
-                'Cost is what the product cost when it sold, shown ex GST (cost ÷ 1.1). A sale with no cost shows a dash and takes the cost once one is added — a cost changed in Magento comes across at the next product sync.'}
+                'Cost is what the product cost when it sold, shown ex GST (cost ÷ 1.1). A dash means no cost was on file; once one is added, this financial year\'s sales take it. A cost changed in Magento comes across at the next product sync.'}
               {data.unitemised.lines > 0 &&
                 ` ${int(data.unitemised.lines)} lines from old imported invoices (${money(data.unitemised.revenue)}) have no product code and aren't itemised.`}
               {' '}Showing up to 2,000 products, highest revenue first. Click a column to sort.
