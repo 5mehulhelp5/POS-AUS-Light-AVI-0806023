@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 import { RootState } from '../../store';
@@ -95,6 +95,35 @@ export default function CustomersPage() {
   const [previousQuotesPagination, setPreviousQuotesPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 });
   const [previousQuotesPage, setPreviousQuotesPage] = useState(1);
   const [viewingOrder, setViewingOrder] = useState<any>(null);
+
+  // Back from a quote opened here returns to this customer and tab
+  // (Sally, 28 Oct 2026: quote numbers on a customer open the quote).
+  const location = useLocation();
+  useEffect(() => {
+    const st = location.state as any;
+    const id = Number(st?.openCustomerId);
+    if (!(id > 0)) return;
+    navigate(location.pathname, { replace: true, state: null });
+    customersApi
+      .getCustomer(id)
+      .then((r) => {
+        const c = r.data?.data?.customer;
+        if (!c) return;
+        setSelectedCustomer(c);
+        if (st.tab) setDetailTab(st.tab);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
+  const openQuote = (quoteId: number) => {
+    if (!selectedCustomer) return;
+    navigate('/quotes', {
+      state: {
+        openQuoteId: quoteId,
+        returnTo: { path: '/customers', state: { openCustomerId: selectedCustomer.id, tab: detailTab } },
+      },
+    });
+  };
 
   // Load stats when a customer is opened
   useEffect(() => {
@@ -562,7 +591,7 @@ export default function CustomersPage() {
               onClick={async () => {
                 if (
                   !window.confirm(
-                    'Find every customer record sharing a phone number and merge them? Orders, quotes, store credit, and contact info will be repointed to the oldest record. The duplicates will be deleted. Cannot be undone.',
+                    'Find every customer record sharing a phone or mobile number and merge them? Orders, quotes, warranties, store credit and contact info move to the record with the most orders and quotes, and the duplicates are deleted. Cannot be undone.',
                   )
                 )
                   return;
@@ -954,7 +983,7 @@ export default function CustomersPage() {
                           >
                             <td className="px-3 py-2 font-medium">
                               <div className="flex items-center gap-2">
-                                <span>{o.orderNumber}</span>
+                                <span className="text-primary-400 hover:underline" title="Open this order">{o.orderNumber}</span>
                                 <span
                                   className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
                                     o.source === 'magento'
@@ -1059,8 +1088,10 @@ export default function CustomersPage() {
                       </thead>
                       <tbody className="divide-y divide-gray-700">
                         {customerActiveQuotes.map((q: any) => (
-                          <tr key={q.id} className="hover:bg-pos-accent/50">
-                            <td className="px-3 py-2 font-medium">{q.quoteNumber}</td>
+                          <tr key={q.id} className="hover:bg-pos-accent/50 cursor-pointer" onClick={() => openQuote(q.id)}>
+                            <td className="px-3 py-2 font-medium">
+                              <span className="text-primary-400 hover:underline" title="Open this quote">{q.quoteNumber}</span>
+                            </td>
                             <td className="px-3 py-2 text-gray-400">{formatDate(q.createdAt)}</td>
                             <td className="px-3 py-2 text-gray-400">{formatDate(q.expiresAt)}</td>
                             <td className="px-3 py-2">
@@ -1119,8 +1150,10 @@ export default function CustomersPage() {
                         {customerPreviousQuotes.map((q: any) => {
                           const status = q.status === 'open' ? 'expired' : q.status;
                           return (
-                            <tr key={q.id} className="hover:bg-pos-accent/50">
-                              <td className="px-3 py-2 font-medium">{q.quoteNumber}</td>
+                            <tr key={q.id} className="hover:bg-pos-accent/50 cursor-pointer" onClick={() => openQuote(q.id)}>
+                              <td className="px-3 py-2 font-medium">
+                                <span className="text-primary-400 hover:underline" title="Open this quote">{q.quoteNumber}</span>
+                              </td>
                               <td className="px-3 py-2 text-gray-400">{formatDate(q.createdAt)}</td>
                               <td className="px-3 py-2">
                                 <span className="px-2 py-0.5 rounded text-xs bg-gray-700 uppercase">

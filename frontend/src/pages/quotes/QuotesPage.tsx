@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { quotesApi, customersApi, productsApi, settingsApi } from '../../services/api';
 import { useMinMarginPercent, fmtPct } from '../../utils/pricingConfig';
@@ -316,6 +316,27 @@ export default function QuotesPage() {
     } catch (error) {
       console.error('Failed to fetch quote:', error);
     }
+  };
+
+  // Opened from a customer's quotes (Sally, 28 Oct 2026): show that quote;
+  // Back returns to the customer. State is cleared so a refresh doesn't
+  // reopen it.
+  const location = useLocation();
+  const [returnTo, setReturnTo] = useState<{ path: string; state: any; quoteId: number } | null>(null);
+  useEffect(() => {
+    const st = location.state as any;
+    const id = Number(st?.openQuoteId);
+    if (!(id > 0)) return;
+    setReturnTo(st?.returnTo?.path ? { path: st.returnTo.path, state: st.returnTo.state, quoteId: id } : null);
+    viewQuote(id);
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
+  const closeQuote = () => {
+    const back = returnTo && selectedQuote && returnTo.quoteId === selectedQuote.id ? returnTo : null;
+    setSelectedQuote(null);
+    setReturnTo(null);
+    if (back) navigate(back.path, { state: back.state });
   };
 
   // Customer search for create modal
@@ -1065,7 +1086,7 @@ export default function QuotesPage() {
           <div className="modal-backdrop">
             <div className="modal-content">
               <div className="flex justify-between items-start mb-4">
-                <button onClick={() => setSelectedQuote(null)} className="modal-back-btn">
+                <button onClick={closeQuote} className="modal-back-btn">
                   <ArrowLeftIcon className="h-5 w-5" /> Back
                 </button>
                 <div className="text-right">

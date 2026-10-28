@@ -90,9 +90,18 @@ export class CustomersService {
     const query = this.customerRepository.createQueryBuilder('customer');
 
     if (search) {
+      // Mobile too, and a number typed with spaces ("0428 537 770") or as
+      // +61 matches the digits-only numbers on file. Searching phone only
+      // missed a customer saved with a mobile, so a second one was made
+      // (Sally, 28 Oct 2026: Trevor in twice).
+      let digits = search.replace(/\D/g, '');
+      if (digits.length === 11 && digits.startsWith('61')) digits = `0${digits.slice(2)}`;
+      const isNumber = digits.length >= 4 && /^[\d\s()+.-]+$/.test(search.trim());
       query.where(
-        '(customer.firstName LIKE :search OR customer.lastName LIKE :search OR customer.email LIKE :search OR customer.phone LIKE :search OR customer.company LIKE :search OR CONCAT(customer.firstName, \' \', customer.lastName) LIKE :search)',
-        { search: `%${search}%` },
+        '(customer.firstName LIKE :search OR customer.lastName LIKE :search OR customer.email LIKE :search OR customer.phone LIKE :search OR customer.mobile LIKE :search OR customer.company LIKE :search OR CONCAT(customer.firstName, \' \', customer.lastName) LIKE :search' +
+          (isNumber ? ' OR customer.phone LIKE :digits OR customer.mobile LIKE :digits' : '') +
+          ')',
+        { search: `%${search}%`, digits: `%${digits}%` },
       );
     }
 
@@ -150,13 +159,14 @@ export class CustomersService {
   }
 
   /**
-   * Find groups of customer rows that share a phone number (after
-   * normalisation) and collapse each group into a single canonical
-   * record. The oldest row by id wins. All foreign-key references
-   * (orders, quotes, inquiries, store credit + transactions) are
-   * repointed to the canonical row before the duplicates are deleted.
-   *
-   * Returns a summary so the caller can show the cashier what changed.
+   * Merge customer records that share a phone number, whether it is saved
+   * as Phone or Mobile (Sally, 28 Oct 2026: Trevor was in twice, one with
+   * the number under Mobile, the other under Phone, and Merge found
+   * nothing). Records linked through any shared number form one group.
+   * The record with the most orders + quotes is kept (oldest on a tie) so
+   * the one staff actually use survives; orders, quotes, enquiries,
+   * warranties and store credit move to it, its blank details are filled
+   * from the others, and the others are deleted.
    */
   async mergeDuplicatesByPhone(): Promise<{
     groupsFound: number;
@@ -164,104 +174,88 @@ export class CustomersService {
     creditTransferred: number;
   }> {
     // eslint-disable-next-line no-console
-    console.log('[customers.merge] starting merge-duplicates-by-phone');
+    console.log('[customers.merge] starting merge-duplicates (phone or mobile)');
 
-    // First pass: rewrite every phone/mobile in the table to digits only,
-    // so historical rows ("0434 310 130", "0434-310-130", null spaces…)
-    // collapse onto the same canonical string. This makes the GROUP BY
-    // below catch dupes that only differ by formatting.
-    //
-    // MySQL syntax: REGEXP_REPLACE replaces all matches by default; the
-    // 4th-arg "flags" form is PostgreSQL-only. The pattern matches one
-    // or more non-digits.
-    try {
-      await this.dataSource.query(
-        `UPDATE customers SET phone = REGEXP_REPLACE(phone, '[^0-9]+', '') WHERE phone IS NOT NULL`,
-      );
-      await this.dataSource.query(
-        `UPDATE customers SET mobile = REGEXP_REPLACE(mobile, '[^0-9]+', '') WHERE mobile IS NOT NULL`,
-      );
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[customers.merge] phone normalisation failed:', err);
-      throw err;
+    // Numbers on file are digits only so formatting never hides a match.
+    // (MySQL REGEXP_REPLACE replaces every match by default.)
+    await this.dataSource.query(
+      `UPDATE customers SET phone = REGEXP_REPLACE(phone, '[^0-9]+', '') WHERE phone IS NOT NULL`,
+    );
+    await this.dataSource.query(
+      `UPDATE customers SET mobile = REGEXP_REPLACE(mobile, '[^0-9]+', '') WHERE mobile IS NOT NULL`,
+    );
+
+    // Every (customer, number) pair; group customers sharing any number.
+    const pairs: Array<{ id: number | string; n: string }> = await this.dataSource.query(
+      `SELECT id, phone n FROM customers WHERE LENGTH(phone) >= 8
+       UNION SELECT id, mobile FROM customers WHERE LENGTH(mobile) >= 8`,
+    );
+    const parent = new Map<number, number>();
+    const find = (x: number): number => {
+      while (parent.get(x) !== x) {
+        parent.set(x, parent.get(parent.get(x)!)!);
+        x = parent.get(x)!;
+      }
+      return x;
+    };
+    const firstWithNumber = new Map<string, number>();
+    for (const p of pairs) {
+      const id = Number(p.id);
+      if (!parent.has(id)) parent.set(id, id);
+      const other = firstWithNumber.get(p.n);
+      if (other === undefined) firstWithNumber.set(p.n, id);
+      else parent.set(find(id), find(other));
     }
-
-    // Find all phone -> [ids...] groupings where there are duplicates.
-    // MySQL: GROUP_CONCAT returns a CSV string; we split it in JS.
-    const rawRows: Array<{ phone: string; ids: string }> = await this.dataSource
-      .query(
-        `SELECT phone, GROUP_CONCAT(id ORDER BY id ASC) AS ids
-         FROM customers
-         WHERE phone IS NOT NULL AND phone <> ''
-         GROUP BY phone
-         HAVING COUNT(*) > 1`,
-      );
-    const rows: Array<{ phone: string; ids: number[] }> = rawRows.map((r) => ({
-      phone: r.phone,
-      ids: String(r.ids).split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n)),
-    }));
+    const byRoot = new Map<number, number[]>();
+    for (const id of parent.keys()) {
+      const r = find(id);
+      byRoot.set(r, [...(byRoot.get(r) || []), id]);
+    }
+    const groups = [...byRoot.values()].filter((ids) => ids.length > 1);
 
     // eslint-disable-next-line no-console
     console.log(
-      `[customers.merge] found ${rows.length} duplicate group(s):`,
-      rows.map((r) => `${r.phone}=[${r.ids.join(',')}]`).join(' '),
+      `[customers.merge] found ${groups.length} duplicate group(s):`,
+      groups.map((g) => `[${g.join(',')}]`).join(' '),
     );
 
     let customersMerged = 0;
     let creditTransferred = 0;
 
-    for (const group of rows) {
-      const ids: number[] = group.ids;
-      if (!ids || ids.length < 2) continue;
-      const canonicalId = ids[0];
-      const dupeIds = ids.slice(1);
-      // eslint-disable-next-line no-console
-      console.log(
-        `[customers.merge] merging dupes ${dupeIds.join(',')} into ${canonicalId} (phone=${group.phone})`,
+    for (const ids of groups) {
+      const usage: Array<{ id: number | string; n: number | string }> = await this.dataSource.query(
+        `SELECT c.id,
+                (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) +
+                (SELECT COUNT(*) FROM quotes q WHERE q.customer_id = c.id) n
+           FROM customers c WHERE c.id IN (${ids.map(() => '?').join(',')})`,
+        ids,
       );
+      const used = new Map(usage.map((u) => [Number(u.id), Number(u.n)]));
+      const sorted = [...ids].sort((a, b) => (used.get(b) || 0) - (used.get(a) || 0) || a - b);
+      const canonicalId = sorted[0];
+      const dupeIds = sorted.slice(1);
+      // eslint-disable-next-line no-console
+      console.log(`[customers.merge] merging ${dupeIds.join(',')} into ${canonicalId}`);
 
-      try {
       await this.dataSource.transaction(async (manager) => {
-        // Repoint all FK tables. We hit raw SQL here because some of
-        // the entities live in other modules and importing them just
-        // for an UPDATE adds noise.
-        // MySQL syntax — `?` placeholders, expanded IN list.
         const inPlaceholders = dupeIds.map(() => '?').join(',');
-        await manager.query(
-          `UPDATE orders SET customer_id = ? WHERE customer_id IN (${inPlaceholders})`,
-          [canonicalId, ...dupeIds],
-        );
-        await manager.query(
-          `UPDATE quotes SET customer_id = ? WHERE customer_id IN (${inPlaceholders})`,
-          [canonicalId, ...dupeIds],
-        );
-        await manager.query(
-          `UPDATE inquiries SET customer_id = ? WHERE customer_id IN (${inPlaceholders})`,
-          [canonicalId, ...dupeIds],
-        );
-        await manager.query(
-          `UPDATE store_credit_transactions SET customer_id = ? WHERE customer_id IN (${inPlaceholders})`,
-          [canonicalId, ...dupeIds],
-        );
+        for (const table of ['orders', 'quotes', 'inquiries', 'warranties', 'store_credit_transactions']) {
+          await manager.query(
+            `UPDATE ${table} SET customer_id = ? WHERE customer_id IN (${inPlaceholders})`,
+            [canonicalId, ...dupeIds],
+          );
+        }
 
-        // Store credit is unique per customer — sum the dupes' balances
-        // into the canonical row, then delete the dupe rows.
+        // Store credit is one row per customer — add the others' balances
+        // to the kept record, then remove their rows.
         const dupeCredits: Array<{ balance: string }> = await manager.query(
           `SELECT balance FROM store_credits WHERE customer_id IN (${inPlaceholders})`,
           [...dupeIds],
         );
-        const transferAmount = dupeCredits.reduce(
-          (sum, r) => sum + Number(r.balance || 0),
-          0,
-        );
+        const transferAmount = dupeCredits.reduce((sum, r) => sum + Number(r.balance || 0), 0);
         if (transferAmount > 0) {
-          // Make sure the canonical has a row (no-op upsert), then add
-          // the transfer. ON DUPLICATE KEY UPDATE balance = balance is
-          // a MySQL idiom for "insert if missing, do nothing if there".
           await manager.query(
-            `INSERT INTO store_credits (customer_id, balance)
-             VALUES (?, 0)
+            `INSERT INTO store_credits (customer_id, balance) VALUES (?, 0)
              ON DUPLICATE KEY UPDATE balance = balance`,
             [canonicalId],
           );
@@ -271,24 +265,21 @@ export class CustomersService {
           );
           creditTransferred += transferAmount;
         }
-        await manager.query(
-          `DELETE FROM store_credits WHERE customer_id IN (${inPlaceholders})`,
-          [...dupeIds],
-        );
+        await manager.query(`DELETE FROM store_credits WHERE customer_id IN (${inPlaceholders})`, [
+          ...dupeIds,
+        ]);
 
-        // Backfill any missing fields on the canonical from a dupe so
-        // we don't lose contact info just because the oldest record
-        // was sparse.
-        const dupes = await manager.find(Customer, {
-          where: dupeIds.map((id) => ({ id })),
-        });
-        const canonical = await manager.findOne(Customer, {
-          where: { id: canonicalId },
-        });
+        // Fill the kept record's blank details from the others. The others
+        // are deleted first: the website (Magento) customer id is unique.
+        const dupes = await manager.find(Customer, { where: dupeIds.map((id) => ({ id })) });
+        const canonical = await manager.findOne(Customer, { where: { id: canonicalId } });
+        await manager.delete(Customer, dupeIds);
         if (canonical) {
           const fields: (keyof Customer)[] = [
             'email',
+            'phone',
             'mobile',
+            'magentoId',
             'company',
             'taxNumber',
             'lastName',
@@ -300,6 +291,7 @@ export class CustomersService {
             'shippingCity',
             'shippingState',
             'shippingPostcode',
+            'notes',
           ];
           let touched = false;
           for (const f of fields) {
@@ -311,36 +303,24 @@ export class CustomersService {
               }
             }
           }
-          // If any dupe was marked trade, the canonical inherits it.
+          // If any of them was trade, the kept record is trade.
           if (!canonical.isTrade && dupes.some((d) => d.isTrade)) {
             canonical.isTrade = true;
             touched = true;
           }
           if (touched) await manager.save(canonical);
         }
-
-        // Finally, drop the duplicate customer rows.
-        await manager.delete(Customer, dupeIds);
       });
-
       customersMerged += dupeIds.length;
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `[customers.merge] failed to merge group phone=${group.phone} ids=${ids.join(',')}:`,
-          err,
-        );
-        throw err;
-      }
     }
 
     // eslint-disable-next-line no-console
     console.log(
-      `[customers.merge] done: ${rows.length} group(s), ${customersMerged} dupe(s) merged, $${creditTransferred.toFixed(2)} store credit consolidated`,
+      `[customers.merge] done: ${groups.length} group(s), ${customersMerged} dupe(s) merged, $${creditTransferred.toFixed(2)} store credit consolidated`,
     );
 
     return {
-      groupsFound: rows.length,
+      groupsFound: groups.length,
       customersMerged,
       creditTransferred: Math.round(creditTransferred * 100) / 100,
     };
