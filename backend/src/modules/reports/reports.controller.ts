@@ -90,7 +90,7 @@ export class ReportsController {
     const role = user?.role?.name;
     if (role !== RoleNames.ADMIN && role !== RoleNames.MANAGER) {
       // Cost and margin stay with managers and admins.
-      data.items = data.items.map((i: any) => ({ ...i, costExGst: null, marginExGst: null, marginPct: null }));
+      data.items = data.items.map((i: any) => ({ ...i, costIncGst: null, marginExGst: null, marginPct: null }));
     }
     return { success: true, data };
   }

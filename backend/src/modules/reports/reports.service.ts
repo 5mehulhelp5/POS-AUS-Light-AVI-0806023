@@ -516,7 +516,9 @@ export class ReportsService {
           orders: n(x.orders),
           revenue,
           revenueExGst: ex(revenue),
-          costExGst: hasCost ? costEx : null,
+          // Inc GST, like the product's cost, so it can be checked against
+          // it (Sally, 28 Oct 2026). Margin stays ex GST.
+          costIncGst: hasCost ? r2(n(x.cost)) : null,
           marginExGst: hasCost ? r2(costedEx - costEx) : null,
           marginPct: hasCost && costedEx > 0 ? r2(((costedEx - costEx) / costedEx) * 100) : null,
         };

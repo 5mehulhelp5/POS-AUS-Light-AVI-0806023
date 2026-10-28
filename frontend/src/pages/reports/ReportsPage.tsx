@@ -551,7 +551,7 @@ function Clearance({ params }: { params: ReportRange }) {
 // ============================================================ BY ITEM
 type ItemRow = {
   productId: number | null; sku: string; name: string; units: number; orders: number; revenue: number;
-  revenueExGst: number; costExGst: number | null; marginExGst: number | null; marginPct: number | null;
+  revenueExGst: number; costIncGst: number | null; marginExGst: number | null; marginPct: number | null;
 };
 const itemColumns: Col<ItemRow>[] = [
   { key: 'sku', label: 'SKU', value: (r) => r.sku },
@@ -559,7 +559,7 @@ const itemColumns: Col<ItemRow>[] = [
   { key: 'units', label: 'Units', align: 'right', value: (r) => r.units, render: (r) => int(r.units) },
   { key: 'orders', label: 'Orders', align: 'right', value: (r) => r.orders, render: (r) => int(r.orders) },
   { key: 'rev', label: 'Revenue (inc GST)', align: 'right', value: (r) => r.revenue, render: (r) => money(r.revenue) },
-  { key: 'cost', label: 'Cost ex GST', align: 'right', value: (r) => r.costExGst ?? '', render: (r) => money(r.costExGst) },
+  { key: 'cost', label: 'Cost (inc GST)', align: 'right', value: (r) => r.costIncGst ?? '', render: (r) => money(r.costIncGst) },
   { key: 'm', label: 'Margin ex GST', align: 'right', value: (r) => r.marginExGst ?? '', render: (r) => money(r.marginExGst) },
   {
     key: 'mp', label: 'Margin %', align: 'right', value: (r) => r.marginPct ?? '',
@@ -594,7 +594,7 @@ function SalesByItem({ params, showCost = true }: { params: ReportRange; showCos
             />
             <Note>
               {showCost &&
-                'Cost is what the product cost when it sold, shown ex GST (cost ÷ 1.1). A dash means no cost was on file; once one is added, this financial year\'s sales take it. A cost changed in Magento comes across at the next product sync.'}
+                'Cost is what the product cost when it sold, inc GST like the cost on the product. Margin is ex GST (revenue less cost, ÷ 1.1). A dash means no cost was on file; once one is added, this financial year\'s sales take it. A cost changed in Magento comes across at the next product sync.'}
               {data.unitemised.lines > 0 &&
                 ` ${int(data.unitemised.lines)} lines from old imported invoices (${money(data.unitemised.revenue)}) have no product code and aren't itemised.`}
               {' '}Showing up to 2,000 products, highest revenue first. Click a column to sort.
