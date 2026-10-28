@@ -983,7 +983,7 @@ export default function CustomersPage() {
                           >
                             <td className="px-3 py-2 font-medium">
                               <div className="flex items-center gap-2">
-                                <span className="text-primary-400 hover:underline" title="Open this order">{o.orderNumber}</span>
+                                <span className="text-primary-400 underline underline-offset-2 hover:opacity-80" title="Open this order">{o.orderNumber}</span>
                                 <span
                                   className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
                                     o.source === 'magento'
@@ -1090,7 +1090,7 @@ export default function CustomersPage() {
                         {customerActiveQuotes.map((q: any) => (
                           <tr key={q.id} className="hover:bg-pos-accent/50 cursor-pointer" onClick={() => openQuote(q.id)}>
                             <td className="px-3 py-2 font-medium">
-                              <span className="text-primary-400 hover:underline" title="Open this quote">{q.quoteNumber}</span>
+                              <span className="text-primary-400 underline underline-offset-2 hover:opacity-80" title="Open this quote">{q.quoteNumber}</span>
                             </td>
                             <td className="px-3 py-2 text-gray-400">{formatDate(q.createdAt)}</td>
                             <td className="px-3 py-2 text-gray-400">{formatDate(q.expiresAt)}</td>
@@ -1152,7 +1152,7 @@ export default function CustomersPage() {
                           return (
                             <tr key={q.id} className="hover:bg-pos-accent/50 cursor-pointer" onClick={() => openQuote(q.id)}>
                               <td className="px-3 py-2 font-medium">
-                                <span className="text-primary-400 hover:underline" title="Open this quote">{q.quoteNumber}</span>
+                                <span className="text-primary-400 underline underline-offset-2 hover:opacity-80" title="Open this quote">{q.quoteNumber}</span>
                               </td>
                               <td className="px-3 py-2 text-gray-400">{formatDate(q.createdAt)}</td>
                               <td className="px-3 py-2">
