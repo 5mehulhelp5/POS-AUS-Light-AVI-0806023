@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, IsNull } from 'typeorm';
 import { Product, Category } from './entities';
+import { fillMissingSaleCosts } from './sale-costs';
 
 @Injectable()
 export class ProductsService {
@@ -123,16 +124,19 @@ export class ProductsService {
     });
   }
 
-  // Supplier cost lives only in the POS (Magento never holds it), so an
-  // on-the-spot correction has to be made here. The Magento sync leaves
-  // `cost` untouched, so an edit survives the next product sync.
+  // On-the-spot cost correction in the POS. The Magento sync only copies
+  // Magento's cost across when it changes there (see magentoCost), so an
+  // edit made here survives the nightly sync. Sales of the product that
+  // were rung up with no cost take the new one.
   async updateCost(productId: number, cost: number | null): Promise<Product> {
     const product = await this.productRepository.findOne({ where: { id: productId } });
     if (!product) {
       throw new NotFoundException(`Product ${productId} not found`);
     }
     product.cost = cost;
-    return this.productRepository.save(product);
+    const saved = await this.productRepository.save(product);
+    await fillMissingSaleCosts(this.productRepository.manager, productId, cost);
+    return saved;
   }
 
   // Per-product trade price. null puts the product back on the

@@ -18,6 +18,15 @@ import { OrderItem } from '../orders/entities/order-item.entity';
 import { SyncLog, SyncType, SyncDirection, SyncLogStatus } from './entities/sync-log.entity';
 import { SettingsService } from '../settings/settings.service';
 import { SettingType } from '../settings/entities/setting.entity';
+import { fillMissingSaleCosts } from '../products/sale-costs';
+
+// Costs come across from Magento when they change there (Sally, 28 Oct
+// 2026: costs she corrected in Magento never reached the POS reports).
+// The first sync that reads a product's Magento cost has nothing to
+// compare with, so it only takes the cost if the product was saved in
+// Magento since this started (Magento time, UTC = 00:00 28 Oct in
+// Melbourne), which picks up the corrections Sally made that day.
+const MAGENTO_COST_EDITS_FROM = '2026-10-27 13:00:00';
 
 // Automatic product sync (Sally, 10 Sep 2026: "an automatic product sync
 // every 15 minutes (or a set time) so nobody has to press the button").
@@ -978,7 +987,31 @@ export class SyncService {
     // Status: 1=enabled, 2=disabled
     const isActive = magentoProd.status === 1;
 
+    // Cost (inc GST), 0 when Magento has none
+    const costRaw = Number(this.getCustomAttribute(magentoProd, 'cost'));
+    const magentoCost = Number.isFinite(costRaw) && costRaw > 0 ? Math.round(costRaw * 10000) / 10000 : 0;
+    let costFromMagento = false;
+
     if (product) {
+      // Take Magento's cost only when it changed there since the last
+      // sync (see MAGENTO_COST_EDITS_FROM for the first read). Clearing it
+      // in Magento leaves the POS cost alone.
+      const lastSeen = product.magentoCost == null ? null : Number(product.magentoCost);
+      const editedInMagento =
+        lastSeen == null
+          ? (magentoProd.updated_at || '') >= MAGENTO_COST_EDITS_FROM
+          : Math.abs(magentoCost - lastSeen) >= 0.00005;
+      if (
+        magentoCost > 0 &&
+        editedInMagento &&
+        (product.cost == null || Math.abs(Number(product.cost) - magentoCost) >= 0.00005)
+      ) {
+        this.logger.log(`Cost from Magento on ${magentoProd.sku}: ${product.cost ?? 'none'} -> ${magentoCost}`);
+        product.cost = magentoCost;
+        costFromMagento = true;
+      }
+      product.magentoCost = magentoCost;
+
       // Update existing product
       product.sku = magentoProd.sku;
       product.name = magentoProd.name;
@@ -1017,6 +1050,8 @@ export class SyncService {
         stockQty,
         brand,
         isActive,
+        cost: magentoCost > 0 ? magentoCost : null,
+        magentoCost,
         syncedAt: new Date(),
       });
     }
@@ -1036,7 +1071,11 @@ export class SyncService {
       product.categories = categories;
     }
 
-    return this.productRepository.save(product);
+    const saved = await this.productRepository.save(product);
+    if (costFromMagento) {
+      await fillMissingSaleCosts(this.dataSource.manager, saved.id, magentoCost);
+    }
+    return saved;
   }
 
   private mapProductType(magentoType: string): ProductType {

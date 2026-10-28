@@ -63,6 +63,14 @@ export class Product {
   @Column({ type: 'decimal', precision: 12, scale: 4, nullable: true })
   cost: number | null;
 
+  // Magento's `cost` as the last product sync saw it (0 = Magento had
+  // none, NULL = not read yet). The sync copies Magento's cost into
+  // `cost` only when this changes, so an edit made in Magento comes
+  // across but costs loaded straight into the POS from supplier lists
+  // (which Magento often has older figures for) aren't overwritten.
+  @Column({ name: 'magento_cost', type: 'decimal', precision: 12, scale: 4, nullable: true })
+  magentoCost: number | null;
+
   // Supplier quantity-break cost (inc GST, like `cost`): what we pay per
   // unit when ordering at least `bulkMinQty` (EGLO, Sally 22 Oct 2026:
   // e.g. $86.90 for 1-5, $82.50 for 6+). `cost` stays the small-order
