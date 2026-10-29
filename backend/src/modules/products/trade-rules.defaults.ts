@@ -1,5 +1,5 @@
 // Declarative trade auto-discount rules, mirroring the Magento cart
-// price rules Sally maintains (rule IDs 88, 89, 92).
+// price rules Sally maintains (rule IDs 88, 89, 111, 112).
 //
 // These used to be closures compiled into the service, which meant a
 // rate change needed a deploy. They're now data so they can live in the
@@ -15,8 +15,8 @@
 //                         Ceiling Fans rule so it survives category
 //                         re-syncs where ids can shift.
 //   'all_except_prefix' - whole catalogue except products whose NAME
-//                         starts with excludeNamePrefix (how Eglo is
-//                         excluded — those products have no synced brand
+//                         starts with excludeNamePrefix (how Eglo used to
+//                         be excluded — products have no synced brand
 //                         attribute, so the name is the only handle)
 //   'all'               - every product
 //
@@ -58,34 +58,36 @@ export const LED_ALU_PROFILE_CATEGORY_ID = 92; // pos.categories.id
 // apply. And if the trade 20% discount is less than the margin, then
 // the margin rule should apply").
 //
+// Eglo is no longer excluded (Sally, 29 Oct 2026: "Eglo shouldn't have a
+// rule anymore ... 20% off lighting and 15% off fans", as Magento's rules
+// 111 / 112 have done since 1 Oct). The old minus-Eglo rule 92 picked
+// Eglo out by name, so Eglo products not named "Eglo ..." got trade and
+// the rest didn't.
+//
 // Order matters — first enabled match wins. Ceiling Fans must sit above
-// the 20%-all rule or fans would never reach their 15%; the 20%-all rule
-// must sit above the two 10% rules so non-Eglo smart-home / LED-profile
-// products keep getting 20% (as they did under the old highest-wins
-// resolution).
+// the 20%-all rule or fans would never reach their 15%. The 20%-all rule
+// catches everything else, so the two 10% rules below it only apply if
+// it is switched off under Settings -> Trade Pricing.
 export const DEFAULT_TRADE_RULES: TradeRule[] = [
   {
-    id: 93,
+    id: 111,
     label: '15% off Ceiling Fans on special price (TRADE)',
     percent: 15,
     matchType: 'category_name',
     categoryId: null,
     categoryName: 'Ceiling Fans',
-    // Fans previously got their 20% via the minus-Eglo rule, so keep
-    // Eglo excluded here too — otherwise Eglo fans would gain a
-    // discount they never had.
-    excludeNamePrefix: 'eglo',
+    excludeNamePrefix: null,
     baseOnSpecialPrice: true,
     excludeClearance: true,
     enabled: true,
   },
   {
-    id: 92,
-    label: '20% off all lighting minus Eglo (TRADE)',
+    id: 112,
+    label: '20% off all lighting (TRADE)',
     percent: 20,
-    matchType: 'all_except_prefix',
+    matchType: 'all',
     categoryId: null,
-    excludeNamePrefix: 'eglo',
+    excludeNamePrefix: null,
     baseOnSpecialPrice: true,
     enabled: true,
   },

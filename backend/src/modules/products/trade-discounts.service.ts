@@ -18,7 +18,7 @@ import {
 import { In } from 'typeorm';
 
 // Trade auto-discounts mirror the Magento cart price rules Sally
-// maintains (rule IDs 88, 89, 92) so the POS can price a trade cart
+// maintains (rule IDs 88, 89, 111, 112) so the POS can price a trade cart
 // without a Magento round-trip. The rules are data, loaded from the
 // `trade_discount_rules` setting and editable under Settings -> Trade
 // Pricing; trade-rules.defaults.ts holds the seed/fallback set.
