@@ -354,12 +354,13 @@ export class TradeDiscountsService {
   }
 
   // A product counts as clearance when any of its categories is named
-  // like one ("Warehouse Clearance", "Clearance", "Sale").
+  // like one ("Warehouse Clearance", "Clearance", "Sale"). Eglo / Havit
+  // sit in Sale for their everyday special price, so for them only a
+  // clearance category counts, as for the SALE tag (Sally, 29 Oct 2026:
+  // Eglo fans get the 15% trade — 91 were left out as "Sale").
   private isClearanceProduct(product: Product): boolean {
-    return (product.categories || []).some((c) => {
-      const n = (c.name || '').trim().toLowerCase();
-      return /clearance/.test(n) || n === 'sale';
-    });
+    if (product.isEverydayPriceBrand) return product.isInClearanceCategory;
+    return product.isInSaleCategory;
   }
 
   async getAutoDiscount(product: Product): Promise<{

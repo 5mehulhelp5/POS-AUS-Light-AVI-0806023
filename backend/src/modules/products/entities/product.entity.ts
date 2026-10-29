@@ -206,9 +206,10 @@ export class Product {
   // Eglo and Havit carry their everyday price as a Magento special price
   // ("RRP $749 / Price $599"). The website's Sale label leaves them out,
   // and so does the POS: no SALE tag, and the fan promotion applies
-  // (Sally, 17 Oct 2026). They still sell at the special price; trade and
-  // cart-discount rules are unchanged. Brand from the product name or a
-  // brand category ("Eglo", "Eglo Ceiling Fans - Major Supplier"…).
+  // (Sally, 17 Oct 2026), and the trade fans rule treats them the same
+  // way (29 Oct). They still sell at the special price. Brand from the
+  // product name or a brand category ("Eglo", "Eglo Ceiling Fans - Major
+  // Supplier"…).
   get isEverydayPriceBrand(): boolean {
     const re = /^(eglo|havit)\b/i;
     return re.test((this.name || '').trim()) || (this.categories || []).some((c) => re.test((c.name || '').trim()));
