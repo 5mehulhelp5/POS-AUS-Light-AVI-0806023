@@ -2185,10 +2185,12 @@ export class OrdersService {
 
   /**
    * After a line changes status the order follows its lines. Standard
-   * order: any open back order => BACKORDER_PENDING; none left =>
-   * COMPLETE if paid in full, else PENDING so the balance can be
-   * collected. Lay-by: paid in full with nothing held or on back order =>
-   * COMPLETE. Returns true when it completed a lay-by.
+   * order: any open back order => BACKORDER_PENDING; else any line held on
+   * lay-by => LAYBY_ACTIVE (Sally, 29 Oct 2026: POS-0423 showed COMPLETE
+   * with its fans on lay-by); none left => COMPLETE if paid in full, else
+   * PENDING so the balance can be collected. Lay-by: paid in full with
+   * nothing held or on back order => COMPLETE. Returns true when it
+   * completed a lay-by.
    */
   private async refreshStatusFromLines(
     manager: EntityManager,
@@ -2210,10 +2212,13 @@ export class OrdersService {
         OrderStatus.PENDING,
         OrderStatus.COMPLETE,
         OrderStatus.BACKORDER_PENDING,
+        OrderStatus.LAYBY_ACTIVE,
       ]);
       if (movable.has(order.status)) {
         if (openBackorder) {
           order.status = OrderStatus.BACKORDER_PENDING;
+        } else if (items.some((i) => i.isLaybyHeld)) {
+          order.status = OrderStatus.LAYBY_ACTIVE;
         } else {
           const balanceOwed = (await paidSoFar()) + 0.01 < Number(order.grandTotal);
           order.status = balanceOwed ? OrderStatus.PENDING : OrderStatus.COMPLETE;
@@ -2532,9 +2537,10 @@ export class OrdersService {
       }
 
       // If everything is now fulfilled AND the balance is paid, flip
-      // the order to COMPLETE and push it to Magento. If the customer
-      // still owes money, keep the order PENDING so the cashier can
-      // collect the balance via Take Payment before closing it out.
+      // the order to COMPLETE — or LAY BY while any line is still held
+      // for the customer (Sally, 29 Oct 2026). If the customer still
+      // owes money, keep the order PENDING so the cashier can collect
+      // the balance via Take Payment before closing it out.
       const refreshed = await queryRunner.manager.findOne(Order, {
         where: { id: orderId },
         relations: ['items'],
@@ -2556,7 +2562,9 @@ export class OrdersService {
         const grandTotal = Number(refreshed.grandTotal);
         const balanceOwed = paidTotal + 0.01 < grandTotal;
         if (!balanceOwed) {
-          refreshed.status = OrderStatus.COMPLETE;
+          refreshed.status = refreshed.items.some((i) => i.isLaybyHeld)
+            ? OrderStatus.LAYBY_ACTIVE
+            : OrderStatus.COMPLETE;
           refreshed.paymentStatus = PaymentStatus.PAID;
         }
         await queryRunner.manager.save(refreshed);
