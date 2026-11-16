@@ -55,7 +55,7 @@ const DELIVERY_LABELS: Record<DeliveryType, string> = {
   delivery: 'Delivery ($60)',
   local_metro: 'Local Metro ($45)',
   austpost: 'AustPost ($14.95)',
-  custom: 'Custom — enter delivery fee',
+  custom: 'Custom fee',
 };
 
 export default function PaymentModal({
@@ -485,15 +485,6 @@ export default function PaymentModal({
     }
   }, [cart.exchangeFromOrderId, cart.customerId, storeCreditBalance]);
 
-  // When store credit is toggled on, default it to min(balance, total)
-  useEffect(() => {
-    if (useStoreCredit) {
-      setStoreCreditAmount(Math.min(storeCreditBalance, totalWithDelivery));
-    } else {
-      setStoreCreditAmount(0);
-    }
-  }, [useStoreCredit, storeCreditBalance, total]);
-
   // Hydrate the customer-detail form from the cart-linked customer
   // record on mount. Without this, if the cashier picked a saved
   // customer in the CartPanel, the phone/email/address inputs land
@@ -546,6 +537,22 @@ export default function PaymentModal({
       : DELIVERY_FEES[deliveryType] || 0;
   const totalWithDelivery =
     Math.round((total + deliveryFeeApplied) * 100) / 100;
+
+  // Store credit covers the whole total, delivery included, and keeps
+  // following it when the delivery changes after the credit went on —
+  // until the cashier types their own amount (Max goes back to
+  // following). Sally, 16 Nov 2026: AustPost on an exchange was being
+  // charged to the customer instead of coming off their credit.
+  const [creditAmountTyped, setCreditAmountTyped] = useState(false);
+  useEffect(() => {
+    if (!useStoreCredit) {
+      setStoreCreditAmount(0);
+      setCreditAmountTyped(false);
+      return;
+    }
+    const most = Math.min(storeCreditBalance, totalWithDelivery);
+    setStoreCreditAmount((typed) => (creditAmountTyped ? Math.min(typed, most) : most));
+  }, [useStoreCredit, storeCreditBalance, totalWithDelivery, creditAmountTyped]);
 
   // Broadcast the chosen delivery method to Redux so the CartPanel
   // sidebar's grand total reflects it (otherwise the sidebar keeps
@@ -1281,7 +1288,8 @@ export default function PaymentModal({
                   max={Math.min(storeCreditBalance, totalWithDelivery)}
                   step="0.01"
                   value={storeCreditAmount}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setCreditAmountTyped(true);
                     setStoreCreditAmount(
                       Math.max(
                         0,
@@ -1290,14 +1298,17 @@ export default function PaymentModal({
                           parseFloat(e.target.value) || 0,
                         ),
                       ),
-                    )
-                  }
+                    );
+                  }}
                   className="input w-28 py-1 px-2 text-sm"
                 />
                 <button
                   type="button"
                   className="btn-sm bg-purple-700 text-white text-xs"
-                  onClick={() => setStoreCreditAmount(Math.min(storeCreditBalance, totalWithDelivery))}
+                  onClick={() => {
+                    setCreditAmountTyped(false);
+                    setStoreCreditAmount(Math.min(storeCreditBalance, totalWithDelivery));
+                  }}
                 >
                   Max
                 </button>
@@ -1405,24 +1416,33 @@ export default function PaymentModal({
           )}
         </div>
 
-        {/* Pickup vs Delivery — single dropdown picks the method; the
-            fee is applied on top of the cart grand total. Server
-            re-applies the same fee from a matching backend map. */}
+        {/* Pickup vs Delivery — one button per method; the fee is
+            applied on top of the cart grand total. Server re-applies the
+            same fee from a matching backend map. Buttons, not a drop-down
+            (Sally, 16 Nov 2026): in the drop-down, Pick Up sat right
+            under the box and a click on the box closed the list without
+            choosing it, so staff couldn't take a delivery back off. */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-400 mb-2">
             Delivery
           </label>
-          <select
-            className="input w-full"
-            value={deliveryType}
-            onChange={(e) => setDeliveryType(e.target.value as DeliveryType)}
-          >
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2" role="group" aria-label="Delivery">
             {(Object.keys(DELIVERY_LABELS) as DeliveryType[]).map((key) => (
-              <option key={key} value={key}>
+              <button
+                key={key}
+                type="button"
+                aria-pressed={deliveryType === key}
+                onClick={() => setDeliveryType(key)}
+                className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-colors ${
+                  deliveryType === key
+                    ? 'bg-primary-600 border-primary-500 text-white'
+                    : 'bg-pos-card border-gray-700 text-gray-400 hover:text-pos-text'
+                }`}
+              >
                 {DELIVERY_LABELS[key]}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
           {deliveryType === 'custom' && (
             <div className="mt-3">
               <label className="block text-xs text-gray-400 mb-1">
@@ -2199,9 +2219,15 @@ export default function PaymentModal({
               <span>GST (incl.)</span>
               <span>${cart.taxAmount.toFixed(2)}</span>
             </div>
+            {deliveryFeeApplied > 0 && (
+              <div className="flex justify-between text-gray-400">
+                <span>{DELIVERY_LABELS[deliveryType].replace(/\s*\(.*\)$/, '')}</span>
+                <span>+${deliveryFeeApplied.toFixed(2)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-700">
               <span>Total</span>
-              <span className="text-primary-400">${cart.grandTotal.toFixed(2)}</span>
+              <span className="text-primary-400">${totalWithDelivery.toFixed(2)}</span>
             </div>
           </div>
         </aside>
