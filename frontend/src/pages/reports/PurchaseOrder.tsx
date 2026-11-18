@@ -48,11 +48,13 @@ export interface PoSourceLine {
 
 interface PoLine {
   key: number;
-  lineId?: number;
+  // The backorder lines this PO line orders: several when the same product
+  // is on more than one customer's order.
+  lineIds: number[];
   qty: string;
   description: string;
   cost: string; // ex GST, as typed
-  reference: string;
+  reference: string; // one customer per row of text
 }
 
 // "7/10/2026" — the template's date style.
@@ -73,26 +75,60 @@ const num = (s: string): number => {
 };
 
 let nextKey = 1;
+const isCustom = (sku: string) => !sku || /^custom$/i.test(sku.trim());
+const qtyText = (n: number) => String(Math.round(n * 1000) / 1000);
 const toLine = (l: PoSourceLine, qtyOnPo: number): PoLine => {
   const bulk = l.bulkCostEx != null && !!l.bulkMinQty && qtyOnPo >= l.bulkMinQty;
   const cost = bulk ? l.bulkCostEx! : l.unitCostEx;
   return {
     key: nextKey++,
-    lineId: l.lineId,
+    lineIds: l.lineId ? [l.lineId] : [],
     qty: String(l.qty),
-    description: !l.sku || /^custom$/i.test(l.sku) ? l.name : `${l.sku} — ${l.name}`,
+    description: isCustom(l.sku) ? l.name : `${l.sku} — ${l.name}`,
     cost: cost != null ? cost.toFixed(2) : '',
     reference: `${l.company || l.customer} ${l.orderNumber}`.trim(),
   };
 };
-// Bulk price when the PO orders at least the break quantity of a SKU
-// across its lines.
+// One PO line per product. The same SKU at the same cost on several
+// customers' orders is added up, with the customers listed under each
+// other in Customer / Ref (Sally, 18 Nov 2026: the Iceman 60" Cypress was
+// on the PO twice, 2 for one customer and 1 for another; she wanted one
+// line of 3). A customer's own quantity follows their name when it's more
+// than 1, so the stock can be shared out when it arrives. Custom items all
+// share the SKU "CUSTOM" but are different things, so they never merge.
+// Bulk price when the PO orders at least the break quantity of a SKU.
 const toLines = (source: PoSourceLine[]): PoLine[] => {
   const qtyBySku = new Map<string, number>();
   for (const l of source) qtyBySku.set(l.sku, (qtyBySku.get(l.sku) || 0) + Number(l.qty || 0));
-  return source.map((l) => toLine(l, qtyBySku.get(l.sku) || 0));
+  const merged: { line: PoLine; qty: number; refs: { ref: string; qty: number }[] }[] = [];
+  const bySkuAndCost = new Map<string, (typeof merged)[number]>();
+  for (const l of source) {
+    const line = toLine(l, qtyBySku.get(l.sku) || 0);
+    const qty = Number(l.qty || 0);
+    const k = isCustom(l.sku) ? null : `${l.sku.trim().toUpperCase()}|${line.cost}`;
+    const hit = k ? bySkuAndCost.get(k) : undefined;
+    if (!hit) {
+      const m = { line, qty, refs: [{ ref: line.reference, qty }] };
+      merged.push(m);
+      if (k) bySkuAndCost.set(k, m);
+      continue;
+    }
+    hit.line.lineIds.push(...line.lineIds);
+    hit.qty += qty;
+    const same = hit.refs.find((r) => r.ref === line.reference);
+    if (same) same.qty += qty;
+    else hit.refs.push({ ref: line.reference, qty });
+  }
+  return merged.map(({ line, qty, refs }) => ({
+    ...line,
+    qty: qtyText(qty),
+    reference:
+      refs.length === 1
+        ? refs[0].ref
+        : refs.map((r) => (r.qty > 1 ? `${r.ref} ×${qtyText(r.qty)}` : r.ref)).join('\n'),
+  }));
 };
-const blankLine = (): PoLine => ({ key: nextKey++, qty: '1', description: '', cost: '', reference: '' });
+const blankLine = (): PoLine => ({ key: nextKey++, lineIds: [], qty: '1', description: '', cost: '', reference: '' });
 
 export default function PurchaseOrderEditor({
   supplier,
@@ -240,8 +276,16 @@ export default function PurchaseOrderEditor({
                   />
                 </td>
                 <td className="py-1.5 pr-2">
-                  <input
-                    className="input py-1 px-2"
+                  {/* Grows with its text, wrapped names included, so every
+                      customer on a merged line stays in view. */}
+                  <textarea
+                    className="input py-1 px-2 resize-none leading-snug overflow-hidden"
+                    rows={1}
+                    ref={(el) => {
+                      if (!el) return;
+                      el.style.height = 'auto';
+                      el.style.height = `${el.scrollHeight + 2}px`;
+                    }}
                     value={l.reference}
                     onChange={(e) => setLine(l.key, { reference: e.target.value })}
                   />
@@ -285,10 +329,10 @@ export default function PurchaseOrderEditor({
           {onMarkedSent && (
             <button
               className="btn-success flex items-center gap-2"
-              disabled={marking || !orderNo.trim() || !used.some((l) => l.lineId)}
+              disabled={marking || !orderNo.trim() || !used.some((l) => l.lineIds.length)}
               title="Record this PO on the backorder lines — they show the PO number and each customer's order gets an internal note"
               onClick={async () => {
-                const lineIds = used.map((l) => l.lineId).filter((v): v is number => !!v);
+                const lineIds = used.flatMap((l) => l.lineIds);
                 if (lineIds.length === 0) return;
                 setMarking(true);
                 try {
@@ -365,7 +409,7 @@ export default function PurchaseOrderEditor({
                       <td className="py-1.5 px-2 border border-black italic">{l.qty}</td>
                       <td className="py-1.5 px-2 border border-black">{l.description}</td>
                       <td className="py-1.5 px-2 border border-black text-right">{l.cost.trim() ? money(num(l.cost)) : ''}</td>
-                      <td className="py-1.5 px-2 border border-black text-center">{l.reference}</td>
+                      <td className="py-1.5 px-2 border border-black text-center whitespace-pre-line">{l.reference}</td>
                     </tr>
                   ))}
                   <tr>
