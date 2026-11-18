@@ -2261,7 +2261,11 @@ export default function QuotesPage() {
       {printingQuote && (
         <div className="modal-backdrop-top print:bg-white print:static" style={{ zIndex: 70 }}>
           <div className="modal-content bg-white text-black !p-0 print:shadow-none printable-root">
-            <div className="p-8" ref={quoteDocRef}>
+            {/* The emailed PDF is drawn from a copy of this box alone, outside
+                the modal, so the paper colours must sit on the box itself —
+                from the modal they reached print but not the PDF: by night
+                its text came out white on white (Sally, 18 Nov 2026). */}
+            <div className="paper bg-white text-black p-8" ref={quoteDocRef}>
               {/* Store header */}
               <div className="flex justify-between items-start mb-6 border-b-2 border-gray-800 pb-4">
                 <div>
